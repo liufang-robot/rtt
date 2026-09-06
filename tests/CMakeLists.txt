@@ -124,6 +124,20 @@ IF (BUILD_TESTING)
         ENVIRONMENT
           "LD_LIBRARY_PATH=${PROJ_BINARY_DIR}/rtt:${PROJ_BINARY_DIR}/rtt/transports/mqueue"
         TIMEOUT 10)
+
+      ADD_EXECUTABLE(xenomai3-cpu-affinity-test xenomai3_cpu_affinity_test.cpp)
+      TARGET_LINK_LIBRARIES(xenomai3-cpu-affinity-test
+        orocos-rtt-${OROCOS_TARGET}_dynamic
+        ${OROCOS-RTT_USER_LINK_LIBS})
+      SET_TARGET_PROPERTIES(xenomai3-cpu-affinity-test PROPERTIES
+        COMPILE_DEFINITIONS "${COMPILE_DEFS}"
+        ENABLE_EXPORTS ON)
+      ADD_TEST(xenomai3-cpu-affinity-test
+        ${RUNTIME_OUTPUT_DIRECTORY}/xenomai3-cpu-affinity-test)
+      SET_TESTS_PROPERTIES(xenomai3-cpu-affinity-test PROPERTIES
+        ENVIRONMENT
+          "LD_LIBRARY_PATH=${PROJ_BINARY_DIR}/rtt:${PROJ_BINARY_DIR}/rtt/transports/mqueue"
+        TIMEOUT 15)
     ENDIF()
 
     IF(UNIX AND NOT OROCOS_TARGET STREQUAL "xenomai" )
