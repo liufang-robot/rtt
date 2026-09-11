@@ -224,6 +224,11 @@ namespace RTT
             task->cpu_affinity = cpu_affinity ? cpu_affinity : ~0;
             int rv;
 
+#if CONFIG_XENO_VERSION_MAJOR >= 3
+            // Let Cobalt select supported CPUs for RTT's unrestricted affinity.
+            if (cpu_affinity == ~0u)
+                cpu_affinity = 0;
+#endif
             unsigned int aff = 0;
             if ( cpu_affinity != 0 ) {
                 // calculate affinity:
