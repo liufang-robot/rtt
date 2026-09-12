@@ -40,204 +40,90 @@
 #define ORO_INPUT_PORT_HPP
 
 #include "base/InputPortInterface.hpp"
+#include "base/DataObject.hpp"
 #include "internal/Channels.hpp"
-#include "internal/InputPortSource.hpp"
+#include "internal/DataSources.hpp"
+#include "internal/PortSnapshot.hpp"
 #include "Logger.hpp"
 #include "Service.hpp"
-#include "OperationCaller.hpp"
-
 #include "OutputPort.hpp"
 
-namespace RTT
-{
-    /**
-     * A component's data input port. An Orocos input port is used to receive
-     * data samples from a distant publisher. The InputPort is read() and returns
-     * true if a sample is available.
-     *
-     * Ideally, your algorithm should not assume a certain connection policy
-     * being used from output to input. So it should work on data connections
-     * and buffer connections.
-     * @ingroup Ports
-     */
-    template<typename T>
-    class InputPort : public base::InputPortInterface
-    {
-    private:
-        friend class internal::ConnOutputEndpoint<T>;
-        typename internal::ConnOutputEndpoint<T>::shared_ptr endpoint;
+namespace RTT {
+/** A typed, component-owned cyclic input image. The execution engine refreshes
+ * it before updateHook(); data() never consumes a transport sample. */
+template<typename T>
+class InputPort : public base::InputPortInterface {
+    friend class internal::ConnOutputEndpoint<T>;
+    friend class internal::PortDataAccess;
+    typename internal::ConnOutputEndpoint<T>::shared_ptr endpoint;
+    T image_{};
+    typename internal::ReferenceDataSource<T>::shared_ptr image_source_;
+    boost::shared_ptr<internal::PortSnapshot<T>> snapshot_;
 
-        virtual bool connectionAdded( base::ChannelElementBase::shared_ptr, ConnPolicy const& ) { return true; }
+    InputPort(const InputPort&) = delete;
+    InputPort& operator=(const InputPort&) = delete;
+    bool connectionAdded(base::ChannelElementBase::shared_ptr, const ConnPolicy&) { return true; }
+    base::DataSourceBase::shared_ptr imageSource() override { return image_source_; }
+    void setImageStatus(FlowStatus value) override {
+        if (value == NewData) snapshot_->publish(image_);
+        image_status_.store(value, std::memory_order_release);
+    }
+    FlowStatus refreshImage() override {
+        FlowStatus result = receive(image_, false);
+        setImageStatus(result);
+        return result;
+    }
+    FlowStatus receive(T& value, bool copy_old_data = true) {
+        FlowStatus result = getEndpoint()->getReadEndpoint()->read(value, copy_old_data);
+        traceRead(result);
+        return result;
+    }
+    FlowStatus receive(base::DataSourceBase::shared_ptr source, bool copy_old_data) override {
+        auto target = boost::dynamic_pointer_cast<internal::AssignableDataSource<T>>(source);
+        if (!target) return NoData;
+        return receive(target->set(), copy_old_data);
+    }
+public:
+    explicit InputPort(const std::string& name = "unnamed", const ConnPolicy& policy = ConnPolicy())
+      : base::InputPortInterface(name, policy), endpoint(new internal::ConnOutputEndpoint<T>(this)),
+        image_source_(new internal::ReferenceDataSource<T>(image_)), snapshot_(new internal::PortSnapshot<T>()) {}
+    ~InputPort() override { preparePortDestruction(); disconnect(); }
 
-        /**
-         * You are not allowed to copy ports.
-         * In case you want to create a container of ports,
-         * use pointers to ports instead of the port object
-         * itself.
-         */
-        InputPort(InputPort const& orig);
-        InputPort& operator=(InputPort const& orig);
-
-    public:
-        InputPort(std::string const& name = "unnamed", ConnPolicy const& default_policy = ConnPolicy())
-            : base::InputPortInterface(name, default_policy)
-            , endpoint(new internal::ConnOutputEndpoint<T>(this))
-        {}
-
-        virtual ~InputPort() { disconnect(); }
-
-        /**
-         * Clears the input buffer (or all input buffers), so that read() will return NoData before a new sample has been written.
-         */
-        void clear()
-        {
-            getEndpoint()->getReadEndpoint()->clear();
-        }
-
-        /** \overload */
-        FlowStatus read(base::DataSourceBase::shared_ptr source)
-        { return read(source, true); }
-
-        FlowStatus read(base::DataSourceBase::shared_ptr source, bool copy_old_data)
-        {
-            typename internal::AssignableDataSource<T>::shared_ptr ds =
-                boost::dynamic_pointer_cast< internal::AssignableDataSource<T> >(source);
-            if (! ds)
-            {
-                Logger::log().logf(Logger::Error, "InputPort", "trying to read to an incompatible data source");
-                return NoData;
-            }
-            RTT::FlowStatus status = read(ds->set(), copy_old_data);
-            traceRead(status);
-            return status;
-        }
-
-        /** Read all new samples that are available on this port, and returns
-         * the last one.
-         *
-         * Returns RTT::NewData if at least one new sample was available, and
-         * either RTT::OldData or RTT::NoData otherwise.
-         */
-        FlowStatus readNewest(base::DataSourceBase::shared_ptr source, bool copy_old_data = true)
-        {
-            typename internal::AssignableDataSource<T>::shared_ptr ds =
-                boost::dynamic_pointer_cast< internal::AssignableDataSource<T> >(source);
-            if (! ds)
-            {
-                Logger::log().logf(Logger::Error, "InputPort", "trying to read to an incompatible data source");
-                return NoData;
-            }
-            return readNewest(ds->set(), copy_old_data);
-        }
-
-        /** \overload */
-        FlowStatus read(typename base::ChannelElement<T>::reference_t sample)
-        { return read(sample, true); }
-
-        /** Reads a sample from the connection. \a sample is a reference which
-         * will get updated if a new sample is available. 
-         *
-         * The method returns an enum FlowStatus, which describes what type of
-         * sample (old or new data) or if a sample was returned (no data)
-         *
-         * With the argument @arg copy_old_data one can specify, if sample should
-         * be updated in the case that the return type is equal to RTT::OldData.
-         * In case @arg copy_old_data is false and an old sample is available, the
-         * method will still return RTT::OldData but the sample will not be updated.
-         */
-        FlowStatus read(typename base::ChannelElement<T>::reference_t sample, bool copy_old_data)
-        {
-            return getEndpoint()->getReadEndpoint()->read(sample, copy_old_data);
-        }
-
-        /** Read all new samples that are available on this port, and returns
-         * the last one.
-         *
-         * Returns RTT::NewData if at least one new sample was available, and
-         * either RTT::OldData or RTT::NoData otherwise.
-         */
-        FlowStatus readNewest(typename base::ChannelElement<T>::reference_t sample, bool copy_old_data = true)
-        {
-            FlowStatus result = read(sample, copy_old_data);
-            if (result != RTT::NewData)
-                return result;
-
-            while (read(sample, false) == RTT::NewData);
-            return RTT::NewData;
-        }
-
-        /**
-         * Get a sample of the data on this port, without actually reading the port's data.
-         * It's the complement of OutputPort::setDataSample() and serves to retrieve the size
-         * of a variable sized data type T. Returns default T if !connected() or if the 
-         * OutputPort did not use setDataSample(). Returns an example T otherwise.
-         * In case multiple inputs are connected to this port a sample from the currently read
-         * connection will be returned.
-         */
-        void getDataSample(T& sample)
-        {
-            sample = getEndpoint()->getReadEndpoint()->data_sample();
-        }
-
-        /** Returns the types::TypeInfo object for the port's type */
-        virtual const types::TypeInfo* getTypeInfo() const
-        { return internal::DataSourceTypeInfo<T>::getTypeInfo(); }
-
-        /**
-         * Create a clone of this port with the same name
-         */
-        virtual base::PortInterface* clone() const
-        { return new InputPort<T>(this->getName()); }
-
-        /**
-         * Create the anti-clone (inverse port) of this port with the same name
-         * A port for reading will return a new port for writing and
-         * vice versa.
-         */
-        virtual base::PortInterface* antiClone() const
-        { return new OutputPort<T>(this->getName()); }
-
-        /** Returns a base::DataSourceBase interface to read this port. The returned
-         * data source is always a new object.
-         */
-        base::DataSourceBase* getDataSource()
-        {
-            return new internal::InputPortSource<T>(*this);
-        }
-
-        virtual bool createStream(ConnPolicy const& policy)
-        {
-            return internal::ConnFactory::createStream(*this, policy);
-        }
-
+    const T& data() const noexcept { return image_; }
+    /** Observe the last prepared image without touching the incoming channel. */
+    bool snapshot(T& value) const {
+        return snapshot_->copy(value, true);
+    }
+    /** Initialize default values/capacity while the component is inactive. */
+    void setDataSample(const T& value) {
+        if (!prepareConnectionChange()) throw std::logic_error("input image is active");
+        image_ = value;
+        snapshot_->initialize(value);
+        setImageStatus(NoData);
+    }
+    void clear() override {
+        if (!prepareConnectionChange()) return;
+        getEndpoint()->getReadEndpoint()->clear();
+        setImageStatus(NoData);
+    }
+    void getDataSample(T& value) { value = getEndpoint()->getReadEndpoint()->data_sample(); }
+    const types::TypeInfo* getTypeInfo() const override { return internal::DataSourceTypeInfo<T>::getTypeInfo(); }
+    base::PortInterface* clone() const override { return new InputPort<T>(getName()); }
+    base::PortInterface* antiClone() const override { return new OutputPort<T>(getName()); }
+    base::DataSourceBase* getDataSource() override { return new internal::PortSnapshotSource<T>(snapshot_, true); }
+    bool createStream(const ConnPolicy& policy) override {
+        return prepareConnectionChange() && internal::ConnFactory::createStream(*this, policy);
+    }
 #ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
-        /**
-         * Create accessor Object for this Port, for addition to a
-         * TaskContext Object interface.
-         */
-        virtual Service* createPortObject()
-        {
-            Service* object = base::InputPortInterface::createPortObject();
-            // Force resolution on the overloaded write method
-            typedef FlowStatus (InputPort<T>::*ReadSample)(typename base::ChannelElement<T>::reference_t);
-            ReadSample read_m = &InputPort<T>::read;
-            object->addSynchronousOperation("read", read_m, this).doc("Reads a sample from the port.").arg("sample", "");
-            object->addSynchronousOperation("clear", &InputPortInterface::clear, this).doc("Clears any remaining data in this port. After a clear, a read() will return NoData if no writes happened in between.");
-            return object;
-        }
+    Service* createPortObject() override {
+        Service* object = base::InputPortInterface::createPortObject();
+        if (object) object->addSynchronousOperation("status", &InputPort::status, this)
+            .doc("Observe freshness of the current cyclic input image.");
+        return object;
+    }
 #endif
-
-        virtual internal::ConnOutputEndpoint<T>* getEndpoint() const
-        {
-            assert(endpoint);
-            return endpoint.get();
-        }
-
-        virtual typename base::ChannelElement<T>::shared_ptr getSharedBuffer() const
-        {
-            return getEndpoint()->getSharedBuffer();
-        }
-    };
+    internal::ConnOutputEndpoint<T>* getEndpoint() const override { return endpoint.get(); }
+    typename base::ChannelElement<T>::shared_ptr getSharedBuffer() const { return endpoint->getSharedBuffer(); }
+};
 }
-
 #endif

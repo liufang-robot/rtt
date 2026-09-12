@@ -959,7 +959,7 @@
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="755.19623"
              x="261.58096"
-             sodipodi:role="line">if (name.read(sample) != RTT::NoData)</tspan><tspan
+             sodipodi:role="line">if (name.status() != RTT::NoData)</tspan><tspan
              id="tspan7365"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="764.98505"
@@ -969,7 +969,7 @@
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="774.77386"
              x="261.58096"
-             sodipodi:role="line">    // either a new, or an already-read</tspan><tspan
+             sodipodi:role="line">    // inspect the stable input image</tspan><tspan
              id="tspan7369"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="784.56262"
@@ -984,7 +984,7 @@
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="804.14026"
              x="261.58096"
-             sodipodi:role="line">if (name.read(sample) == RTT::NewData)</tspan><tspan
+             sodipodi:role="line">if (name.status() == RTT::NewData)</tspan><tspan
              id="tspan7375"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="813.92902"
@@ -994,7 +994,7 @@
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="823.71783"
              x="261.58096"
-             sodipodi:role="line">    // there was a never-read sample</tspan><tspan
+             sodipodi:role="line">    // name.data() has a new publication</tspan><tspan
              id="tspan7379"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="833.50665"
@@ -1104,12 +1104,12 @@
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="935.73981"
              x="-118.28746"
-             sodipodi:role="line">// write data into 'sample'</tspan><tspan
+             sodipodi:role="line">// engine commits after updateHook</tspan><tspan
              id="tspan12737"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="945.52863"
              x="-118.28746"
-             sodipodi:role="line">name.write(sample);</tspan><tspan
+             sodipodi:role="line">name.data() = sample;</tspan><tspan
              id="tspan12639-3"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="955.31738"

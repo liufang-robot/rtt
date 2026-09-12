@@ -1322,99 +1322,19 @@
             did not succeed.
 	  </para>
 	</section>
-	<section>
-	  <title>Data Flow Event Transitions</title>
-	  <para>
-	    An important property of state machines is that they can
-	    react to external (asynchronous) events. Orocos
-	    components can define reactions to data arriving on
-	    <classname>RTT::InputPort</classname>s. When new data arrives on this port, we speak
-	    of an 'event'.
-	  </para>
-	  <note><para>A StateMachine can only react to InputPorts
-	  which have been added with 'addEventPort' to the TaskContext.
-	  </para></note>
-	  <para>
-	    Event transitions are an extension to the transitions
-	    above and cite an InputPort name between the transition and the
-	    if statement. They are specified as:
-	  </para>
-	  <programlisting>  state X {
-    var Float64 d
-    transition x_in_port(d) if ( d >1.3 ) then {
-       // transition succeeds, transition program:
-       // ...
-    } select ONE_STATE else {
-       // transition fails, failure program:
-       // ...
-    } select OTHER_STATE
-
-    // other events likewise...
-  }</programlisting>
-	  <para>
-            Both the transition programs and the the select statements
-            are optional, but at least a program or select statement
-            must be given. The <programlisting>  transition x_in_port(d) if (d >1.3) then {
-	    </programlisting> short notation statement is equivalent to writing (NOTE: the added .read(d) part) :
-	    <programlisting>  transition if ( x_in_port.read(d) == NewData &amp;&amp; d >1.3) then {...
-	    </programlisting>
-	  </para>
-	  <important>
-	    <para>
-	      This short notation differs however from the long form
-	      as such: if multiple transitions are waiting on the same
-	      port, but with a different guard, the short notation
-	      will give all transitions a chance to see the NewData return
-	      value. If a user would use the long form, only the first
-	      transition statement would see NewData, all the others
-	      would see OldData as return value. In this case, the short
-	      notation is prefered.
-	    </para>
-	  </important>
-	  <para>
-	    When the input port <function>x_in_port</function>
-	    receives NewData, our state machine reacts to it and the
-	    data is stored in d. The <function>if ... then</function>
-	    statement may check this variable and any other state
-	    variables and methods to evaluate the transition. If it
-	    succeeds, an optional transition program may be given and
-	    a target state <function>select</function>ed (ONE_STATE).
-	    if the transition fails, an optional failure program may
-	    be given and an optional <function>select</function>
-	    (OTHER_STATE) statement may be given.  The number of
-	    arguments must match the number of arguments of the used
-	    event.  The event is processed as an asynchronous
-	    callback, thus in the thread or task of the StateMachine's
-	    processor.
-	  </para>
-	  <para>
-	    Event transitions are enabled after the entry program and
-	    before the exit program (also in automatic mode).  All events
-	    are processed in a state until the first event that leads
-	    to a valid state transition. In the mean time, the run 
-	    or handle program may continue, but will be interrupted
-			in a yield statement if an event leads to a transition. 
-			Run or handle programs without yield will be allowed to 
-			finish normally, before the transition is taken.
-	  </para>
-	</section>
-	<section>
-	  <title>Reacting to level events on Ports</title>
-	  <para>
-			Another pattern of using ports to handle events, is to
-			implement level events instead of edge events as seen above.
-			The syntax for level events shows that the port must be read
-			out in the if statement, as a normal port read:
-	  </para>
-	  <programlisting>  transition if (robotState.read(robot_state) != NoData &amp;&amp; Robot.STATE_SAFE == robot_state) select SAFE;
-		</programlisting>
-	  <para>
-			The example above shows reading a robotState port and storing the
-			result in the robot_state variable. The transition then checks if
-			the robot_state variable is equal to the defined STATE_SAFE constant
-			in the Robot peer component.
-	  </para>
-	</section>
+        <section>
+          <title>Cyclic State Observations</title>
+          <para>Data ports are latest-value process images managed by the component
+          execution engine. Scripts cannot consume or publish port samples. The
+          old transition inputPort(value) shorthand is rejected; use operation
+          events for discrete commands and component attributes or observation
+          operations for state conditions.</para>
+          <programlisting>transition if (Robot.currentState() == Robot.STATE_SAFE) select SAFE;</programlisting>
+          <para>Here currentState() is a component-defined observation operation.
+          Port status() is non-consuming, so evaluating it repeatedly does not
+          acknowledge or clear NewData. State-machine function processing retains
+          its existing schedule; the automatic I/O boundary surrounds updateHook().</para>
+        </section>
 	<section>
 	  <title>Operation Event Transitions</title>
 	  <para>

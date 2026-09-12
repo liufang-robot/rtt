@@ -66,9 +66,8 @@ namespace RTT {
      *
      *  <li> if, upon connection, the last value that has been written on the
      *       writer end should be written on the connection as well to
-     *       initialize it. This flag has an effect only if the writer has
-     *       keepsLastWrittenValue() set to true (see
-     *       OutputPortInterface::keepLastWrittenValue()).
+     *       initialize it. Initialization uses the last committed output snapshot;
+     *       an output image that has never been committed sends no initial value.
      *
      *  <li> if the data is pushed or pulled on the connection. This has an
      *       effect only on multi-process communication. In the pushed case (the
@@ -196,9 +195,8 @@ namespace RTT {
         int    lock_policy;
 
         /** If true, one should initialize the connection's value with the last
-         * value written on the writer port. This is only possible if the writer
-         * port has the keepsLastWrittenValue() flag set (i.e. if it remembers
-         * what was the last written value).
+         * committed output value. An output that has not yet completed a
+         * publication boundary sends no initial value.
          */
         bool   init;
 

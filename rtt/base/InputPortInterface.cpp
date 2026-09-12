@@ -102,7 +102,7 @@ bool InputPortInterface::connectTo(PortInterface* other)
 
 bool InputPortInterface::addConnection(ConnID* cid, ChannelElementBase::shared_ptr channel, const ConnPolicy& policy)
 {
-    // input ports don't check the connection policy.
+    if (!prepareConnectionChange()) return false;
     return cmanager.addConnection( cid, channel, policy);
 }
 
@@ -119,13 +119,13 @@ void InputPortInterface::signalInterface(bool true_false)
 }
 #endif
 
-FlowStatus InputPortInterface::read(DataSourceBase::shared_ptr, bool)
-{ throw std::runtime_error("calling default InputPortInterface::read(datasource) implementation"); }
+FlowStatus InputPortInterface::receive(DataSourceBase::shared_ptr, bool)
+{ throw std::runtime_error("calling default InputPortInterface::receive(datasource) implementation"); }
 
 /** Returns true if this port is connected */
 bool InputPortInterface::connected() const
 {
-    return getEndpoint()->connected();
+    return getEndpoint()->connected() || hasMemberConnections();
 }
 
 void InputPortInterface::traceRead([[maybe_unused]] RTT::FlowStatus status)
@@ -135,16 +135,21 @@ void InputPortInterface::traceRead([[maybe_unused]] RTT::FlowStatus status)
 
 void InputPortInterface::disconnect()
 {
+    if (!prepareConnectionChange()) return;
+    disconnectMemberConnections();
     cmanager.disconnect();
 }
 
 bool InputPortInterface::disconnect(PortInterface* port)
 {
-    return cmanager.disconnect(port);
+    if (!prepareConnectionChange() || (port && !port->prepareConnectionChange())) return false;
+    const bool mapped = disconnectMemberConnections(port);
+    return cmanager.disconnect(port) || mapped;
 }
 
 bool InputPortInterface::createConnection( internal::SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy )
 {
+    if (hasMemberConnections() || !prepareConnectionChange()) return false;
     return internal::ConnFactory::createSharedConnection(0, this, shared_connection, policy);
 }
 

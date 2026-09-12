@@ -40,6 +40,7 @@
 #define ORO_INPUT_PORT_INTERFACE_HPP
 
 #include <string>
+#include <atomic>
 #include "PortInterface.hpp"
 #include "ChannelElement.hpp"
 #include "../internal/rtt-internal-fwd.hpp"
@@ -48,6 +49,8 @@
 #include "../internal/Signal.hpp"
 #endif
 #include "../base/DataSourceBase.hpp"
+
+namespace RTT { namespace internal { class PortDataAccess; } }
 
 namespace RTT
 { namespace base {
@@ -65,7 +68,14 @@ namespace RTT
         typedef NewDataOnPortEvent::SlotFunction SlotFunction;
 #endif
 
+    private:
+        friend class internal::PortDataAccess;
+        virtual DataSourceBase::shared_ptr imageSource() { return {}; }
+        virtual FlowStatus refreshImage() { return NoData; }
+        virtual FlowStatus receive(DataSourceBase::shared_ptr source, bool copy_old_data);
+        virtual void setImageStatus(FlowStatus value) { image_status_.store(value); }
     protected:
+        std::atomic<FlowStatus> image_status_{NoData};
         ConnPolicy        default_policy;
 #ifdef ORO_SIGNALLING_PORTS
         NewDataOnPortEvent* new_data_on_port_event;
@@ -99,12 +109,8 @@ namespace RTT
          */
         virtual DataSourceBase* getDataSource() = 0;
 
-        /** Reads the port and updates the value hold by the given data source.
-         * This is only valid for local ports.
-         *
-         * \a source has to be an assignable data source
-         */
-        virtual FlowStatus read(DataSourceBase::shared_ptr source, bool copy_old_data = true);
+        /** Freshness of the image prepared for this cycle; no channel access. */
+        FlowStatus status() const noexcept { return image_status_.load(std::memory_order_acquire); }
 
         /** Removes any connection that either go to or come from this port
          *  *and* removes all callbacks and cleans up the NewDataOnPortEvent.

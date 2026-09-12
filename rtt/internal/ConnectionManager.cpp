@@ -109,6 +109,12 @@ namespace RTT
             }
         }
 
+        ConnectionManager::Connections ConnectionManager::getConnections() const
+        {
+            PortConnectionLock lock(mport);
+            return connections;
+        }
+
         bool ConnectionManager::connected() const
         {
             PortConnectionLock lock(mport);

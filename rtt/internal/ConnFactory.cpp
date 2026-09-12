@@ -1,3 +1,4 @@
+#include "PortDataAccess.hpp"
 /***************************************************************************
   tag: Peter Soetens  Thu Oct 22 11:59:08 CEST 2009  ConnFactory.cpp
 
@@ -161,7 +162,7 @@ base::ChannelElementBase::shared_ptr ConnFactory::createAndCheckStream(base::Out
     }
     types::TypeMarshaller* ttt = dynamic_cast<types::TypeMarshaller*> ( type->getProtocol(policy.transport) );
     if (ttt) {
-        int size_hint = ttt->getSampleSize( output_port.getDataSource() );
+        int size_hint = ttt->getSampleSize( PortDataAccess::image(output_port) );
         policy.data_size = size_hint;
     } else {
         Logger::log().logf(Logger::Debug, "ConnFactory",

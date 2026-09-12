@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  corba_mqueue_ipc_test.cpp
 
@@ -136,14 +137,14 @@ void CorbaMQueueIPCTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( !mr1->read(value) );
+    BOOST_CHECK( !RTT::internal::PortDataAccess::receive(*mr1, value) );
 
     // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr1);
-    BOOST_CHECK( mr1->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr1);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr1);
-    BOOST_CHECK( mr1->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr1);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
@@ -157,21 +158,21 @@ void CorbaMQueueIPCTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( !mr1->read(value) );
+    BOOST_CHECK( !RTT::internal::PortDataAccess::receive(*mr1, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr1);
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr1);
-    ASSERT_PORT_SIGNALLING(mw1->write(3.0), mr1);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr1);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr1);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr1);
     // it will be emptied too fast by mqueue.
-    //ASSERT_PORT_SIGNALLING(mw1->write(4.0), 0);
-    BOOST_CHECK( mr1->read(value) );
+    //ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mr1->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mr1->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
     BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK_EQUAL( mr1->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr1, value), OldData );
 }
 
 void CorbaMQueueIPCTest::testPortDisconnected()

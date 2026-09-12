@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  corba_mqueue_ipc_server.cpp
 
@@ -55,8 +56,8 @@ public:
                            "Received data on port");
         double d = 123456.789;
         FlowStatus fs = NoData;
-        while( (fs = mi1.read(d, false)) == NewData ) {
-            mo1.write(d);
+        while( (fs = RTT::internal::PortDataAccess::receive(mi1, d, false)) == NewData ) {
+            RTT::internal::PortDataAccess::publish(mo1, d);
         }
     }
 

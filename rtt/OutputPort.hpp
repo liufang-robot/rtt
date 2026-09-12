@@ -41,312 +41,103 @@
 
 #include "base/OutputPortInterface.hpp"
 #include "base/DataObject.hpp"
-#include "internal/DataObjectDataSource.hpp"
+#include "internal/PortSnapshot.hpp"
+#include "internal/DataSources.hpp"
 #include "internal/Channels.hpp"
 #include "internal/ConnFactory.hpp"
-#include "Logger.hpp"
 #include "Service.hpp"
-#include "OperationCaller.hpp"
-
+#include <atomic>
+#include <stdexcept>
 #include "InputPort.hpp"
 
-namespace RTT
-{
-    /**
-     * A component's data output port. An Orocos OutputPort is a send-and-forget
-     * mechanism. The publisher writes data samples into the OutputPort and the
-     * underlying middleware will communicate it to all subscribers. An
-     * output port without subscribers is not an error on the component level (it may be at the system
-     * level, which can inspect the status with calling connected() ).
-     *
-     * The data written into an OutputPort should be copyable and should provide
-     * a copy constructor in case it's not plain old data. If you want the RTT
-     * to transport your data over the network, or use it in scripting, you need
-     * to register your data class with the RTT type system.
-     *
-     * @see RTT::types::TemplateTypeInfo for adding custom data classes to the RTT.
-     * @ingroup Ports
-     */
-    template<typename T>
-    class OutputPort : public base::OutputPortInterface
-    {
-    private:
-        friend class internal::ConnInputEndpoint<T>;
-        typename internal::ConnInputEndpoint<T>::shared_ptr endpoint;
+namespace RTT {
+/** A typed cyclic output image. Components modify data(); only the runtime
+ * publishes a completed image. Observers use synchronized committed snapshots. */
+template<typename T>
+class OutputPort : public base::OutputPortInterface {
+    friend class internal::ConnInputEndpoint<T>;
+    friend class internal::PortDataAccess;
+    typename internal::ConnInputEndpoint<T>::shared_ptr endpoint;
+    T image_{};
+    typename internal::ReferenceDataSource<T>::shared_ptr image_source_;
+    boost::shared_ptr<internal::PortSnapshot<T>> committed_;
 
-        virtual bool connectionAdded( base::ChannelElementBase::shared_ptr channel_input, ConnPolicy const& policy ) {
-            // Initialize the new channel with last written data if requested
-            // (and available)
+    OutputPort(const OutputPort&) = delete;
+    OutputPort& operator=(const OutputPort&) = delete;
+    bool connectionAdded(base::ChannelElementBase::shared_ptr channel, const ConnPolicy& policy) override {
+        auto typed = channel->template narrow<T>();
+        T sample{};
+        if (!snapshot(sample)) sample = image_;
+        if (!typed || typed->data_sample(sample, false) == NotConnected) return false;
+        return !policy.init || !committed_->available.load(std::memory_order_acquire) || typed->write(sample) != NotConnected;
+    }
+    base::DataSourceBase::shared_ptr imageSource() override { return image_source_; }
+    WriteStatus commitImage() override { return publish(image_); }
+    WriteStatus publish(const T& value) {
+        // Slow observers may occupy every bounded snapshot slot. Their cache
+        // can retain an older commit, but must never suppress channel delivery.
+        const bool retained = committed_->publish(value);
+        if (!connected()) return retained ? NotConnected : WriteFailure;
+        traceWrite();
+        return getEndpoint()->getWriteEndpoint()->write(value);
+    }
+    WriteStatus publish(base::DataSourceBase::shared_ptr source) override {
+        auto value = boost::dynamic_pointer_cast<internal::DataSource<T>>(source);
+        if (!value) return WriteFailure;
+        value->evaluate();
+        return publish(value->rvalue());
+    }
+public:
+    explicit OutputPort(const std::string& name = "unnamed")
+      : base::OutputPortInterface(name), endpoint(new internal::ConnInputEndpoint<T>(this)),
+        image_source_(new internal::ReferenceDataSource<T>(image_)), committed_(new internal::PortSnapshot<T>()) {}
+    ~OutputPort() override { preparePortDestruction(); disconnect(); }
 
-            // This this the input channel element of the whole connection
-            typename base::ChannelElement<T>::shared_ptr channel_el_input = channel_input.get()->narrow<T>();
-
-            if (has_initial_sample)
-            {
-                T const& initial_sample = sample->Get();
-                if ( channel_el_input->data_sample(initial_sample, /* reset = */ false) != NotConnected ) {
-                    if ( has_last_written_value && policy.init )
-                        return ( channel_el_input->write(initial_sample) != NotConnected );
-                    return true;
-                } else {
-                    Logger::log().logf(Logger::Error, "OutputPort", "Failed to pass data sample to data channel. Aborting connection.");
-                    return false;
-                }
-            }
-
-            // even if we're not written, test the connection with a default sample.
-            return ( channel_el_input->data_sample( T(), /* reset = */ false ) != NotConnected );
-        }
-
-        /// True if \c sample has been set at least once by a call to write()
-        bool has_last_written_value;
-        /// True if \c sample has been written at least once, either by calling
-        // data_sample or by calling write() with keeps_next_written_value or
-        // keeps_last_written_value to true
-        bool has_initial_sample;
-        /// If true, the next call to write() will save the sample in \c sample.
-        // This is used to initialize connections with a known sample
-        bool keeps_next_written_value;
-        /// If true, all calls to write() will save the sample in \c sample.
-        // This is used to allow the use of the 'init' connection policy option
-        bool keeps_last_written_value;
-        typename base::DataObjectInterface<T>::shared_ptr sample;
-
-        /**
-         * You are not allowed to copy ports.
-         * In case you want to create a container of ports,
-         * use pointers to ports instead of the port object
-         * itself.
-         */
-        OutputPort( OutputPort const& orig );
-        OutputPort& operator=(OutputPort const& orig);
-
-    public:
-        /**
-         * Creates a named Output port.
-         * @param name The name of this port, unique among the ports of a TaskContext.
-         * @param keep_last_written_value Defaults to \a true. You need keep_last_written_value == true
-         * in two cases:
-         * * You're sending dynamically sized objects through this port in real-time. In that case,
-         * you need to write() to this port such an object before a connection is created. That object
-         * will be used to allocate enough data storage in each there-after created connection. If you would
-         * set keep_last_written_value == false in this use case, several memory allocations will happen
-         * during the initial writes, after which none will happen anymore.
-         * * You want to have an input to have the last written data available from before its connection
-         * was created, such that it is immediately initialized.
-         * The keep_last_written_value incurs a space overhead of one thread-safe data storage container.
-         * This is about the same size as one extra connection.
-         *
-         */
-        OutputPort(std::string const& name = "unnamed", bool keep_last_written_value = true)
-            : base::OutputPortInterface(name)
-            , endpoint(new internal::ConnInputEndpoint<T>(this))
-            , has_last_written_value(false)
-            , has_initial_sample(false)
-            , keeps_next_written_value(false)
-            , keeps_last_written_value(false)
-            , sample( new base::DataObject<T>() )
-        {
-            if (keep_last_written_value)
-                keepLastWrittenValue(true);
-        }
-
-        virtual ~OutputPort() { disconnect(); }
-
-        void keepNextWrittenValue(bool keep)
-        {
-            keeps_next_written_value = keep;
-        }
-
-        void keepLastWrittenValue(bool keep)
-        {
-            keeps_last_written_value = keep;
-        }
-
-        bool keepsLastWrittenValue() const { return keeps_last_written_value; }
-
-        /**
-         * Returns the last written value written to this port, in case it is
-         * kept by this port, otherwise, returns a default T().
-         * @return The last written value or T().
-         */
-        T getLastWrittenValue() const
-        {
-            return sample->Get();
-        }
-
-        /**
-         * Reads the last written value written to this port, in case it is
-         * kept by this port, otherwise, returns false.
-         * @param sample The data sample to store the value into.
-         * @return true if it could be retrieved, false otherwise.
-         */
-        bool getLastWrittenValue(T& sample) const
-        {
-            if (has_last_written_value)
-            {
-                this->sample->Get(sample);
-                return true;
-            }
-            return false;
-        }
-
-        virtual base::DataSourceBase::shared_ptr getDataSource() const
-        {
-            // we create this on the fly.
-            return new internal::DataObjectDataSource<T>( sample );
-        }
-
-        /**
-         * Provides this port a data sample that is representative for the
-         * samples being used in write(). The sample will not be delivered
-         * to receivers, and only passed on to the underlying communication channel
-         * to allow it to allocate enough memory to hold the sample. You
-         * only need to call this in case you want to transfer dynamically
-         * sized objects in real-time over this OutputPort.
-         * @param sample
-         */
-        void setDataSample(const T& sample)
-        {
-            this->sample->Set(sample);
-            has_initial_sample = true;
-            has_last_written_value = false;
-
-            if (connected()) {
-                WriteStatus result = getEndpoint()->getWriteEndpoint()->data_sample(sample, /* reset = */ true);
-                if (result == NotConnected) {
-                    Logger::log().logf(Logger::Error, "OutputPort", "A channel of port %s has been invalidated during setDataSample(), it will be removed", getName().c_str());
-                }
-            }
-        }
-
-        /**
-         * Clears the last written value and all data stored in shared connection buffers.
-         * The clear() call on an OutputPort has no effect on private connections.
-         */
-        void clear()
-        {
-            has_last_written_value = false;
-            getEndpoint()->getWriteEndpoint()->clear(); // only affects shared pull connections, where getInputEndpoint() would return the port's buffer object
-
-            // eventually clear shared connection
-            internal::SharedConnectionBase::shared_ptr shared_connection = cmanager.getSharedConnection();
-            if (shared_connection) {
-                shared_connection->clear();
-            }
-        }
-
-        /**
-         * Writes a new sample to all receivers (if any).
-         * @param sample The new sample to send out.
-         */
-        WriteStatus write(const T& sample)
-        {
-            if (keeps_last_written_value || keeps_next_written_value)
-            {
-                keeps_next_written_value = false;
-                has_initial_sample = true;
-                this->sample->Set(sample);
-            }
-            has_last_written_value = keeps_last_written_value;
-
-            WriteStatus result = NotConnected;
-            if (connected()) {
-                traceWrite();
-                result = getEndpoint()->getWriteEndpoint()->write(sample);
-                if (result == NotConnected) {
-                    Logger::log().logf(Logger::Error, "OutputPort", "A channel of port %s has been invalidated during write(), it will be removed", getName().c_str());
-                }
-            }
-
-            return result;
-        }
-
-        WriteStatus write(base::DataSourceBase::shared_ptr source)
-        {
-            typename internal::AssignableDataSource<T>::shared_ptr ds =
-                boost::dynamic_pointer_cast< internal::AssignableDataSource<T> >(source);
-            if (ds) {
-                traceWrite();
-                return write(ds->rvalue());
-            }
-            else
-            {
-                typename internal::DataSource<T>::shared_ptr ds =
-                    boost::dynamic_pointer_cast< internal::DataSource<T> >(source);
-                if (ds) {
-                    traceWrite();
-                    return write(ds->get());
-                }
-                else
-                    Logger::log().logf(Logger::Error, "OutputPort", "trying to write from an incompatible data source");
-            }
-            return WriteFailure;
-        }
-
-        /** Returns the types::TypeInfo object for the port's type */
-        virtual const types::TypeInfo* getTypeInfo() const
-        { return internal::DataSourceTypeInfo<T>::getTypeInfo(); }
-
-        /**
-         * Create a clone of this port with the same name
-         */
-        virtual base::PortInterface* clone() const
-        { return new OutputPort<T>(this->getName()); }
-
-        /**
-         * Create the anti-clone (inverse port) of this port with the same name
-         * A port for reading will return a new port for writing and
-         * vice versa.
-         */
-        virtual base::PortInterface* antiClone() const
-        { return new InputPort<T>(this->getName()); }
-
-        using base::OutputPortInterface::createConnection;
-
-        /** Connects this write port to the given read port, using the given
-         * policy */
-        virtual bool createConnection(base::InputPortInterface& input_port, ConnPolicy const& policy)
-        {
-            return internal::ConnFactory::createConnection(*this, input_port, policy);
-        }
-
-        virtual bool createStream(ConnPolicy const& policy)
-        {
-            return internal::ConnFactory::createStream(*this, policy);
-        }
-
+    T& data() noexcept { return image_; }
+    const T& data() const noexcept { return image_; }
+    T snapshot() const { T value{}; snapshot(value); return value; }
+    bool snapshot(T& value) const {
+        return committed_->copy(value);
+    }
+    base::DataSourceBase::shared_ptr getDataSource() const override {
+        return new internal::PortSnapshotSource<T>(committed_);
+    }
+    /** Prepare defaults and transport capacity while inactive; does not publish. */
+    void setDataSample(const T& value) {
+        if (!prepareConnectionChange()) throw std::logic_error("output image is active");
+        image_ = value;
+        committed_->initialize(value);
+        if (connected()) getEndpoint()->getWriteEndpoint()->data_sample(value, true);
+    }
+    void clear() {
+        if (!prepareConnectionChange()) return;
+        committed_->clear();
+        getEndpoint()->getWriteEndpoint()->clear();
+        auto shared = cmanager.getSharedConnection();
+        if (shared) shared->clear();
+    }
+    const types::TypeInfo* getTypeInfo() const override { return internal::DataSourceTypeInfo<T>::getTypeInfo(); }
+    base::PortInterface* clone() const override { return new OutputPort<T>(getName()); }
+    base::PortInterface* antiClone() const override { return new InputPort<T>(getName()); }
+    using base::OutputPortInterface::createConnection;
+    bool createConnection(base::InputPortInterface& input, const ConnPolicy& policy) override {
+        if (input.hasMemberConnections() || !validateWholeConnection(input)) return false;
+        if (!prepareConnectionChange() || !input.prepareConnectionChange()) return false;
+        return internal::ConnFactory::createConnection(*this, input, policy);
+    }
+    bool createStream(const ConnPolicy& policy) override {
+        return prepareConnectionChange() && internal::ConnFactory::createStream(*this, policy);
+    }
 #ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
-        /**
-         * Create accessor Object for this Port, for addition to a
-         * TaskContext Object interface.
-         */
-        virtual Service* createPortObject()
-        {
-            Service* object = base::OutputPortInterface::createPortObject();
-            // Force resolution on the overloaded write method
-            typedef WriteStatus (OutputPort<T>::*WriteSample)(T const&);
-            WriteSample write_m = &OutputPort::write;
-            typedef T (OutputPort<T>::*LastSample)() const;
-            LastSample last_m = &OutputPort::getLastWrittenValue;
-            object->addSynchronousOperation("write", write_m, this).doc("Writes a sample on the port.").arg("sample", "");
-            object->addSynchronousOperation("last", last_m, this).doc("Returns last written value to this port.");
-            return object;
-        }
+    Service* createPortObject() override {
+        Service* object = base::OutputPortInterface::createPortObject();
+        if (object) object->addSynchronousOperation("snapshot", static_cast<T (OutputPort::*)() const>(&OutputPort::snapshot), this)
+            .doc("Observe the last committed cyclic output value.");
+        return object;
+    }
 #endif
-
-        virtual internal::ConnInputEndpoint<T>* getEndpoint() const
-        {
-            assert(endpoint);
-            return endpoint.get();
-        }
-
-        virtual typename base::ChannelElement<T>::shared_ptr getSharedBuffer() const
-        {
-            return getEndpoint()->getSharedBuffer();
-        }
-    };
-
+    internal::ConnInputEndpoint<T>* getEndpoint() const override { return endpoint.get(); }
+    typename base::ChannelElement<T>::shared_ptr getSharedBuffer() const { return endpoint->getSharedBuffer(); }
+};
 }
-
 #endif

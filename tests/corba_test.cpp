@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
 
@@ -160,14 +161,14 @@ void CorbaTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi2->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), NoData );
 
     // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mo1->write(1.0), mi2);
-    BOOST_CHECK( mi2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo1, 1.0), mi2);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi2, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mo1->write(2.0), mi2);
-    BOOST_CHECK( mi2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo1, 2.0), mi2);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi2, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
@@ -181,19 +182,19 @@ void CorbaTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi2->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), NoData );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mo1->write(1.0), mi2);
-    ASSERT_PORT_SIGNALLING(mo1->write(2.0), mi2);
-    ASSERT_PORT_SIGNALLING(mo1->write(3.0), mi2);
-    BOOST_CHECK( mi2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo1, 1.0), mi2);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo1, 2.0), mi2);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo1, 3.0), mi2);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi2, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mi2->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi2, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mi2->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi2, value) );
     BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK_EQUAL( mi2->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), OldData );
 }
 
 void CorbaTest::testPortDisconnected()
@@ -664,16 +665,16 @@ BOOST_AUTO_TEST_CASE( testSharedConnections )
     BOOST_REQUIRE( mi2->getManager()->getSharedConnection() );
     BOOST_REQUIRE( mi3->getManager()->getSharedConnection() );
     BOOST_CHECK_EQUAL( mi2->getManager()->getSharedConnection()->getName(), mi3->getManager()->getSharedConnection()->getName() );
-    BOOST_CHECK_EQUAL( mi3->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NoData );
     testPortDataConnection(); // communication between mo and mi should work the same as for private connections
-    BOOST_CHECK_EQUAL( mi3->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), OldData );
     BOOST_CHECK_EQUAL( value, 2.0 );
-    BOOST_CHECK_EQUAL( mo2->write(3.0), WriteSuccess );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(*mo2, 3.0), WriteSuccess );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi3->read(value), NewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NewData );
     BOOST_CHECK_EQUAL( value, 3.0 );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi2->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), OldData );
     BOOST_CHECK_EQUAL( value, 3.0 );
 
     ports->disconnectPort("mo"); // disconnect from the output side
@@ -694,18 +695,18 @@ BOOST_AUTO_TEST_CASE( testSharedConnections )
     BOOST_REQUIRE( mi2->getManager()->getSharedConnection() );
     BOOST_REQUIRE( mi3->getManager()->getSharedConnection() );
     BOOST_CHECK_EQUAL( mi2->getManager()->getSharedConnection()->getName(), mi3->getManager()->getSharedConnection()->getName() );
-    BOOST_CHECK_EQUAL( mi3->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NoData );
 #ifndef RTT_CORBA_PORTS_DISABLE_SIGNAL
     testPortDataConnection(); // communication between mo and mi should work the same as for private connections
-    BOOST_CHECK_EQUAL( mi3->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), OldData );
     BOOST_CHECK_EQUAL( value, 2.0 );
 #endif // RTT_CORBA_PORTS_DISABLE_SIGNAL
-    BOOST_CHECK_EQUAL( mo2->write(3.0), WriteSuccess );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(*mo2, 3.0), WriteSuccess );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi3->read(value), NewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NewData );
     BOOST_CHECK_EQUAL( value, 3.0 );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi2->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), OldData );
     BOOST_CHECK_EQUAL( value, 3.0 );
 
     ports->disconnectPort("mo"); // disconnect from the output side
@@ -725,25 +726,25 @@ BOOST_AUTO_TEST_CASE( testSharedConnections )
     BOOST_CHECK( mo2->connected() );
     BOOST_CHECK( mo1->getSharedBuffer() );
     BOOST_CHECK( mo2->getSharedBuffer() );
-    BOOST_CHECK_EQUAL( mi3->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NoData );
 #ifndef RTT_CORBA_PORTS_DISABLE_SIGNAL
     testPortDataConnection(); // communication between mo and mi should work the same as for private connections
-    BOOST_CHECK_EQUAL( mi3->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), OldData );
     BOOST_CHECK_EQUAL( value, 2.0 );
 #endif // RTT_CORBA_PORTS_DISABLE_SIGNAL
-    BOOST_CHECK_EQUAL( mo1->write(3.0), WriteSuccess );
-    BOOST_CHECK_EQUAL( mo2->write(4.0), WriteSuccess );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(*mo1, 3.0), WriteSuccess );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(*mo2, 4.0), WriteSuccess );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi3->read(value), NewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), NewData );
     BOOST_CHECK_EQUAL( value, 3.0 );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi2->read(value), NewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), NewData );
     BOOST_CHECK_EQUAL( value, 4.0 );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi3->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi3, value), OldData );
     BOOST_CHECK_EQUAL( value, 3.0 );
     value = 0.0;
-    BOOST_CHECK_EQUAL( mi2->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi2, value), OldData );
     BOOST_CHECK_EQUAL( value, 4.0 );
 
     ports2->disconnectPort("mi"); // disconnect from the input side
@@ -915,16 +916,16 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     CORBA::Any_var sample = new CORBA::Any();
     BOOST_REQUIRE( cce.in() );
 
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), CNoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNoData );
     // Check read of new data
-    mo1->write( 3.33 );
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), CNewData );
+    RTT::internal::PortDataAccess::publish(*mo1,  3.33 );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNewData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
     // Check re-read of old data.
     sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), COldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), COldData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
@@ -939,13 +940,13 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     // Check read of new data
     result = 0.0;
     sample <<= 4.44;
-    cce->write( sample.in() );
-    BOOST_CHECK_EQUAL( mi1->read( result ), NewData );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi1,  result ), NewData );
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.
     result = 0.0;
-    BOOST_CHECK_EQUAL( mi1->read( result ), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi1,  result ), OldData );
     BOOST_CHECK_EQUAL( result, 4.44);
 }
 
@@ -969,20 +970,20 @@ BOOST_AUTO_TEST_CASE( testBufferHalfs )
     CORBA::Any_var sample = new CORBA::Any();
     BOOST_REQUIRE( cce.in() );
 
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), CNoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNoData );
     // Check read of new data
-    mo1->write( 6.33 );
-    mo1->write( 3.33 );
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), CNewData );
+    RTT::internal::PortDataAccess::publish(*mo1,  6.33 );
+    RTT::internal::PortDataAccess::publish(*mo1,  3.33 );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNewData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 6.33);
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), CNewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNewData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
     // Check re-read of old data.
     sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), COldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), COldData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
@@ -997,17 +998,17 @@ BOOST_AUTO_TEST_CASE( testBufferHalfs )
     // Check read of new data
     result = 0.0;
     sample <<= 6.44;
-    cce->write( sample.in() );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
     sample <<= 4.44;
-    cce->write( sample.in() );
-    BOOST_CHECK_EQUAL( mi1->read( result ), NewData );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi1,  result ), NewData );
     BOOST_CHECK_EQUAL( result, 6.44 );
-    BOOST_CHECK_EQUAL( mi1->read( result ), NewData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi1,  result ), NewData );
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.
     result = 0.0;
-    BOOST_CHECK_EQUAL( mi1->read( result ), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi1,  result ), OldData );
     BOOST_CHECK_EQUAL( result, 4.44);
 }
 

@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
 
@@ -70,8 +71,8 @@ public:
     void updateHook(){
         double d = 123456.789;
         FlowStatus fs = NoData;
-        while( (fs = mi1.read(d, false)) == NewData ) {
-            mo1.write(d);
+        while( (fs = RTT::internal::PortDataAccess::receive(mi1, d, false)) == NewData ) {
+            RTT::internal::PortDataAccess::publish(mo1, d);
         }
     }
 

@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
 
@@ -190,14 +191,14 @@ void CorbaTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
     // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mo->write(1.0), mi);
-    BOOST_CHECK( mi->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 1.0), mi);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mo->write(2.0), mi);
-    BOOST_CHECK( mi->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 2.0), mi);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
@@ -211,20 +212,20 @@ void CorbaTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mo->write(1.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(2.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(3.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(4.0), 0);
-    BOOST_CHECK( mi->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 1.0), mi);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 2.0), mi);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 3.0), mi);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 4.0), 0);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mi->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mi->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
     BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK_EQUAL( mi->read(value), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), OldData );
 }
 
 void CorbaTest::testPortDisconnected()
@@ -596,14 +597,14 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     BOOST_REQUIRE( cce.in() );
 
     // Check read of new data
-    mo->write( 3.33 );
-    wait_for_equal( cce->read( sample.out(), true), CNewData, 5 );
+    RTT::internal::PortDataAccess::publish(*mo,  3.33 );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true), CNewData, 5 );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
     // Check re-read of old data.
     sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true), COldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true), COldData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
@@ -621,13 +622,13 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     // Check read of new data
     result = 0.0;
     sample <<= 4.44;
-    cce->write( sample.in() );
-    wait_for_equal( mi->read( result ), NewData, 5 );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*mi,  result ), NewData, 5 );
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.
     result = 0.0;
-    BOOST_CHECK_EQUAL( mi->read( result ), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi,  result ), OldData );
     BOOST_CHECK_EQUAL( result, 4.44);
 }
 
@@ -665,16 +666,16 @@ BOOST_AUTO_TEST_CASE( testBufferHalfs )
     BOOST_REQUIRE( cce.in() );
 
     // Check read of new data
-    mo->write( 6.33 );
-    mo->write( 3.33 );
-    wait_for_equal( cce->read( sample.out(), true), CNewData, 10 );
+    RTT::internal::PortDataAccess::publish(*mo,  6.33 );
+    RTT::internal::PortDataAccess::publish(*mo,  3.33 );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true), CNewData, 10 );
     sample >>= result;
 #ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
     BOOST_CHECK_EQUAL( result, 6.33);
 #else
     BOOST_CHECK( (result == 6.33) || (result == 3.33) );
 #endif
-    wait_for_equal( cce->read( sample.out(), true ), CNewData, 10 );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), CNewData, 10 );
     sample >>= result;
 #ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
     BOOST_CHECK_EQUAL( result, 3.33);
@@ -684,7 +685,7 @@ BOOST_AUTO_TEST_CASE( testBufferHalfs )
 
     // Check re-read of old data.
     sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), COldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true ), COldData );
     sample >>= result;
 #ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
     BOOST_CHECK_EQUAL( result, 3.33);
@@ -705,17 +706,17 @@ BOOST_AUTO_TEST_CASE( testBufferHalfs )
     // Check read of new data
     result = 0.0;
     sample <<= 6.44;
-    cce->write( sample.in() );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
     sample <<= 4.44;
-    cce->write( sample.in() );
-    wait_for_equal( mi->read( result ), NewData, 5 );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*mi,  result ), NewData, 5 );
     BOOST_CHECK_EQUAL( result, 6.44 );
-    wait_for_equal( mi->read( result ), NewData, 5 );
+    wait_for_equal( RTT::internal::PortDataAccess::receive(*mi,  result ), NewData, 5 );
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.
     result = 0.0;
-    BOOST_CHECK_EQUAL( mi->read( result ), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi,  result ), OldData );
     BOOST_CHECK_EQUAL( result, 4.44);
 }
 
