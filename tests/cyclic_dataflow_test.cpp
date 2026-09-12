@@ -3,6 +3,7 @@
 #include <rtt/InputPort.hpp>
 #include <rtt/OutputPort.hpp>
 #include <rtt/internal/PortDataAccess.hpp>
+#include <rtt/internal/ConnFactory.hpp>
 #include <rtt/extras/SlaveActivity.hpp>
 #include <rtt/types/StructTypeInfo.hpp>
 #include <rtt/types/CArrayTypeInfo.hpp>
@@ -256,11 +257,15 @@ BOOST_AUTO_TEST_CASE(source_and_destination_destruction_invalidate_and_allow_rec
     source.reset();
     BOOST_CHECK(!task.isRunning());
     BOOST_CHECK(!destination.connected());
+    BOOST_CHECK(destination.getSourceConnections().empty());
     BOOST_REQUIRE(task.start()); step(task);
     BOOST_CHECK_EQUAL(destination.data().axis.position, 17.0);
     task.stop();
     OutputPort<double> replacement("replacement");
     BOOST_REQUIRE(connectMembers(replacement, "", destination, "axis.position"));
+    const auto replacementSources = destination.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(replacementSources.size(), 1u);
+    BOOST_CHECK_EQUAL(replacementSources[0].sourcePort, "replacement");
     PortDataAccess::publish(replacement, 29.0);
     BOOST_REQUIRE(task.start()); step(task);
     BOOST_CHECK_EQUAL(destination.data().axis.position, 29.0);
@@ -287,6 +292,7 @@ BOOST_AUTO_TEST_CASE(service_removal_detaches_nested_mapping_endpoints_and_activ
     task.provides()->removeService("outer");
     BOOST_CHECK(!source.connectedTo(&destination));
     BOOST_CHECK(destination.getInterface() == 0);
+    BOOST_CHECK(destination.getSourceConnections().empty());
     BOOST_REQUIRE(task.start()); step(task); task.stop();
 }
 
@@ -409,6 +415,121 @@ BOOST_AUTO_TEST_CASE(whole_dynamic_sequence_members_follow_resized_values) {
     source.data().clear(); PortDataAccess::commit(source); step(task);
     BOOST_CHECK(destination.data().values.empty());
     task.stop();
+}
+
+BOOST_AUTO_TEST_CASE(source_connections_describe_logical_whole_and_member_endpoints) {
+    TaskContext producer("producer"), scalarProducer("scalar"), consumer("consumer");
+    consumer.setActivity(new extras::SlaveActivity(0.01));
+    OutputPort<Frame> source("state");
+    OutputPort<double> scalar("value");
+    InputPort<Frame> assembled("assembled"), whole("whole");
+    InputPort<double> selected("selected");
+    producer.provides("motion")->provides("feedback")->addPort(source);
+    scalarProducer.addPort(scalar);
+    consumer.provides("io")->addPort(assembled);
+    consumer.provides("io")->addPort(whole);
+    consumer.provides("io")->addPort(selected);
+
+    BOOST_REQUIRE(source.connectTo(&whole));
+    BOOST_REQUIRE(connectMembers(source, "axis.velocity", assembled, "axis.velocity"));
+    BOOST_REQUIRE(connectMembers(source, "values[01]", assembled, "values[02]"));
+    BOOST_REQUIRE(connectMembers(scalar, "", assembled, "axis.position"));
+    BOOST_REQUIRE(connectMembers(source, "axis.position", selected, ""));
+
+    const auto wholeSources = whole.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(wholeSources.size(), 1u);
+    BOOST_CHECK_EQUAL(wholeSources[0].sourcePort, "producer.motion.feedback.state");
+    BOOST_CHECK(wholeSources[0].sourceMember.empty());
+    BOOST_CHECK(wholeSources[0].destinationMember.empty());
+    const auto memberSources = assembled.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(memberSources.size(), 3u);
+    BOOST_CHECK_EQUAL(memberSources[0].sourcePort, "scalar.value");
+    BOOST_CHECK(memberSources[0].sourceMember.empty());
+    BOOST_CHECK_EQUAL(memberSources[0].destinationMember, "axis.position");
+    BOOST_CHECK_EQUAL(memberSources[1].sourcePort, "producer.motion.feedback.state");
+    BOOST_CHECK_EQUAL(memberSources[1].sourceMember, "axis.velocity");
+    BOOST_CHECK_EQUAL(memberSources[1].destinationMember, "axis.velocity");
+    BOOST_CHECK_EQUAL(memberSources[2].sourcePort, "producer.motion.feedback.state");
+    BOOST_CHECK_EQUAL(memberSources[2].sourceMember, "values[1]");
+    BOOST_CHECK_EQUAL(memberSources[2].destinationMember, "values[2]");
+    const auto selectedSources = selected.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(selectedSources.size(), 1u);
+    BOOST_CHECK_EQUAL(selectedSources[0].sourcePort, "producer.motion.feedback.state");
+    BOOST_CHECK_EQUAL(selectedSources[0].sourceMember, "axis.position");
+    BOOST_CHECK(selectedSources[0].destinationMember.empty());
+
+    source.data().axis.position = 3;
+    source.data().axis.velocity = 4;
+    source.data().values[1] = 5;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(PortDataAccess::publish(scalar, 9.0), WriteSuccess);
+    // Inspecting the graph must neither consume publications nor update images.
+    BOOST_CHECK_EQUAL(assembled.getSourceConnections().size(), 3u);
+    BOOST_CHECK_EQUAL(assembled.status(), NoData);
+    BOOST_CHECK_EQUAL(assembled.data().axis.position, 0.0);
+    BOOST_REQUIRE(consumer.start());
+    step(consumer);
+    BOOST_CHECK_EQUAL(assembled.data().axis.position, 9.0);
+    BOOST_CHECK_EQUAL(assembled.data().axis.velocity, 4.0);
+    BOOST_CHECK_EQUAL(assembled.data().values[2], 5.0);
+    BOOST_CHECK_EQUAL(selected.data(), 3.0);
+    BOOST_CHECK_EQUAL(assembled.status(), NewData);
+    BOOST_CHECK_EQUAL(assembled.getSourceConnections().size(), 3u);
+    BOOST_CHECK_EQUAL(assembled.status(), NewData);
+    BOOST_REQUIRE(consumer.stop());
+    source.disconnect();
+    BOOST_CHECK(whole.getSourceConnections().empty());
+    BOOST_CHECK(selected.getSourceConnections().empty());
+    BOOST_REQUIRE_EQUAL(assembled.getSourceConnections().size(), 1u);
+    BOOST_CHECK_EQUAL(assembled.getSourceConnections()[0].sourcePort, "scalar.value");
+    BOOST_CHECK_EQUAL(memberSources[1].sourcePort, "producer.motion.feedback.state");
+}
+
+BOOST_AUTO_TEST_CASE(source_connections_enumerate_all_shared_writers_without_consuming_data) {
+    ConnPolicy policy = ConnPolicy::data(ConnPolicy::LOCKED);
+    policy.buffer_policy = Shared;
+    OutputPort<double> first("first"), second("second");
+    InputPort<double> input("input", policy);
+    BOOST_REQUIRE(second.createConnection(input));
+    BOOST_REQUIRE(first.createConnection(input));
+    BOOST_REQUIRE_EQUAL(PortDataAccess::publish(second, 42.0), WriteSuccess);
+    const auto sources = input.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(sources.size(), 2u);
+    BOOST_CHECK_EQUAL(sources[0].sourcePort, "first");
+    BOOST_CHECK_EQUAL(sources[1].sourcePort, "second");
+    BOOST_CHECK(sources[0].destinationMember.empty());
+    BOOST_CHECK(sources[0].sourceMember.empty());
+    double value = 0;
+    BOOST_CHECK_EQUAL(PortDataAccess::receive(input, value), NewData);
+    BOOST_CHECK_EQUAL(value, 42.0);
+    first.disconnect();
+    const auto remaining = input.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(remaining.size(), 1u);
+    BOOST_CHECK_EQUAL(remaining[0].sourcePort, "second");
+    input.disconnect();
+    BOOST_CHECK(input.getSourceConnections().empty());
+}
+
+BOOST_AUTO_TEST_CASE(source_connections_preserve_unknown_transport_identity_alongside_local_sources) {
+    // Model a transport endpoint whose identity is a stream, not a local port.
+    struct StreamOutput : OutputPort<double> {
+        StreamOutput() : OutputPort<double>("must_not_be_reported") {}
+        internal::ConnID* getPortID() const override {
+            return new internal::StreamConnID("transport_stream");
+        }
+    } stream;
+    OutputPort<double> local("local");
+    InputPort<double> input("input");
+    BOOST_REQUIRE(local.connectTo(&input));
+    BOOST_REQUIRE(stream.connectTo(&input));
+    const auto sources = input.getSourceConnections();
+    BOOST_REQUIRE_EQUAL(sources.size(), 2u);
+    BOOST_CHECK(sources[0].sourcePort.empty());
+    BOOST_CHECK(sources[0].sourceMember.empty());
+    BOOST_CHECK(sources[0].destinationMember.empty());
+    BOOST_CHECK_EQUAL(sources[1].sourcePort, "local");
+    input.disconnect();
+    BOOST_CHECK(input.getSourceConnections().empty());
 }
 
 BOOST_AUTO_TEST_CASE(cyclic_and_missing_service_graphs_fail_finalization_and_teardown_safely) {

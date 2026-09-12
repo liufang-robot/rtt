@@ -23,6 +23,18 @@ typedef boost::shared_ptr<base::ActionInterface> Assignment;
 struct Segment { std::string name; bool index; };
 typedef std::vector<Segment> Path;
 
+std::string pathText(const Path& path) {
+    std::string text;
+    for (size_t i = 0; i < path.size(); ++i) {
+        if (path[i].index) text += "[" + path[i].name + "]";
+        else {
+            if (!text.empty()) text += ".";
+            text += path[i].name;
+        }
+    }
+    return text;
+}
+
 bool parse(const std::string& text, Path& result) {
     size_t pos = 0;
     bool member = true;
@@ -355,6 +367,20 @@ bool CyclicDataFlow::contains(const base::PortInterface& port, const base::PortI
             (s.destination == &port && (!other || s.source == other))) return true;
     }
     return false;
+}
+
+base::InputPortInterface::SourceConnections CyclicDataFlow::sources(const base::InputPortInterface& port) const {
+    base::InputPortInterface::SourceConnections result;
+    for (size_t i = 0; i < impl->subscriptions.size(); ++i) {
+        const Impl::Subscription& subscription = *impl->subscriptions[i];
+        if (subscription.destination != &port) continue;
+        for (size_t m = 0; m < subscription.mappings.size(); ++m) {
+            const Impl::Mapping& mapping = subscription.mappings[m];
+            result.push_back(base::InputPortInterface::SourceConnection{
+                subscription.source->getFullName(), pathText(mapping.sourcePath), pathText(mapping.destinationPath)});
+        }
+    }
+    return result;
 }
 
 bool CyclicDataFlow::disconnect(base::PortInterface& port, base::PortInterface* other) {

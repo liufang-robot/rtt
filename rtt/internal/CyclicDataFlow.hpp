@@ -4,6 +4,7 @@
 #include "../rtt-config.h"
 #include "../rtt-fwd.hpp"
 #include "../base/rtt-base-fwd.hpp"
+#include "../base/InputPortInterface.hpp"
 #include <string>
 #include <memory>
 
@@ -27,6 +28,7 @@ public:
     TaskContext& owner() const;
     bool connectionChangeAllowed(const base::PortInterface&) const;
     bool contains(const base::PortInterface&, const base::PortInterface* other = 0) const;
+    base::InputPortInterface::SourceConnections sources(const base::InputPortInterface&) const;
     bool disconnect(base::PortInterface&, base::PortInterface* other = 0);
     void forget(base::PortInterface&);
 };

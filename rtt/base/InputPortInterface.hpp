@@ -41,6 +41,7 @@
 
 #include <string>
 #include <atomic>
+#include <vector>
 #include "PortInterface.hpp"
 #include "ChannelElement.hpp"
 #include "../internal/rtt-internal-fwd.hpp"
@@ -90,6 +91,26 @@ namespace RTT
         void traceRead(RTT::FlowStatus status);
         InputPortInterface(const InputPortInterface& orig);
     public:
+
+        /** One logical writer of this input, copied for inspection. */
+        struct SourceConnection {
+            std::string sourcePort;       //!< Qualified registered output name; empty if unavailable.
+            std::string sourceMember;     //!< Canonical selector; empty means the whole output.
+            std::string destinationMember; //!< Canonical selector; empty means this whole input.
+        };
+        typedef std::vector<SourceConnection> SourceConnections;
+
+        /**
+         * Describe current whole-port and member connections without reading data.
+         * Entries are sorted by destination selector, source port and source selector.
+         * An opaque transport connection has an empty sourcePort, rather than an
+         * invented local endpoint. Returned strings remain valid after disconnect.
+         *
+         * This allocates inspection data and is not a realtime operation. It may
+         * run alongside component cycles with a frozen graph. As with port/service
+         * traversal, callers must serialize it with topology changes and destruction.
+         */
+        SourceConnections getSourceConnections() const;
 
         InputPortInterface(std::string const& name, ConnPolicy const& default_policy = ConnPolicy());
 
