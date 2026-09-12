@@ -44,6 +44,7 @@
 #include "os/MutexLock.hpp"
 #include "internal/MWSRQueue.hpp"
 #include "TaskContext.hpp"
+#include "internal/CyclicDataFlow.hpp"
 #include "internal/CatchConfig.hpp"
 #include "extras/SlaveActivity.hpp"
 #include "os/traces.h"
@@ -366,7 +367,16 @@ namespace RTT
             if ( taskc->mTaskState == TaskCore::Running && taskc->mTargetState == TaskCore::Running ) {
                 TRY (
                     { tracepoint_context(orocos_rtt, TaskContext_updateHook, taskc->mName.c_str());
-                        taskc->updateHook(); }
+                        TaskContext* context = dynamic_cast<TaskContext*>(taskc);
+                        if (!context || context->cyclicDataFlow().refresh()) {
+                            taskc->updateHook();
+                            if (context && taskc->mTaskState == TaskCore::Running &&
+                                taskc->mTargetState == TaskCore::Running)
+                                context->cyclicDataFlow().commit();
+                        } else {
+                            taskc->error();
+                        }
+                    }
                 ) CATCH(std::exception const& e,
                     Logger::log().logf(Logger::Error, "ExecutionEngine", "in updateHook(): switching to exception state because of unhandled exception");
                     Logger::log().logf(Logger::Error, "ExecutionEngine", "  %s", e.what());

@@ -50,7 +50,8 @@
 #include "../rtt-fwd.hpp"
 
 namespace RTT
-{ namespace base {
+{ namespace internal { class CyclicDataFlow; }
+namespace base {
 
     /**
      * The base class of every data flow port.
@@ -61,6 +62,7 @@ namespace RTT
         std::string name;
         std::string fullName;
         std::string mdesc;
+        std::vector<internal::CyclicDataFlow*> cyclicDependencies;
 
         void updateFullName();
 
@@ -76,6 +78,17 @@ namespace RTT
 
     public:
         virtual ~PortInterface();
+
+        // Runtime topology protocol. Typed port destructors call this before
+        // their images disappear; it synchronizes affected component activities.
+        bool connectionChangeAllowed() const;
+        bool validateWholeConnection(PortInterface& other) const;
+        bool prepareConnectionChange();
+        bool disconnectMemberConnections(PortInterface* other = 0);
+        bool hasMemberConnections() const;
+        void preparePortDestruction();
+        void addCyclicDependency(internal::CyclicDataFlow*);
+        void removeCyclicDependency(internal::CyclicDataFlow*);
 
         /**
          * Returns the identity of this port in a ConnID object.

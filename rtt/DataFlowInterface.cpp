@@ -37,6 +37,7 @@
 
 
 #include "DataFlowInterface.hpp"
+#include <stdexcept>
 #include "Logger.hpp"
 #include "Service.hpp"
 #include "TaskContext.hpp"
@@ -57,6 +58,9 @@ namespace RTT
     }
 
     PortInterface& DataFlowInterface::addPort(PortInterface& port) {
+        if ((getOwner() && getOwner()->base::TaskCore::isRunning()) || !port.prepareConnectionChange())
+            throw std::runtime_error("Cannot change ports of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
         if ( !chkPtr("addPort", "PortInterface", &port) ) return port;
         this->addLocalPort(port);
         Service::shared_ptr mservice_ref;
@@ -84,6 +88,9 @@ namespace RTT
     }
 
     PortInterface& DataFlowInterface::addLocalPort(PortInterface& port) {
+        if ((getOwner() && getOwner()->base::TaskCore::isRunning()) || !port.prepareConnectionChange())
+            throw std::runtime_error("Cannot change ports of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
         for ( Ports::iterator it(mports.begin());
               it != mports.end();
               ++it)
@@ -101,6 +108,9 @@ namespace RTT
     }
 
     InputPortInterface& DataFlowInterface::addEventPort(InputPortInterface& port, SlotFunction callback) {
+        if ((getOwner() && getOwner()->base::TaskCore::isRunning()) || !port.prepareConnectionChange())
+            throw std::runtime_error("Cannot change ports of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
         if ( !chkPtr("addEventPort", "PortInterface", &port) ) return port;
         this->addLocalEventPort(port, callback);
         Service::shared_ptr mservice_ref;
@@ -179,10 +189,15 @@ namespace RTT
     }
 
     void DataFlowInterface::removePort(const std::string& name) {
+        if (getOwner() && getOwner()->base::TaskCore::isRunning())
+            throw std::runtime_error("Cannot remove a port of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
         for ( Ports::iterator it(mports.begin());
               it != mports.end();
               ++it)
             if ( (*it)->getName() == name ) {
+                if (!(*it)->connectionChangeAllowed())
+                    throw std::runtime_error("Cannot remove a port while a connected component is running");
                 (*it)->disconnect(); // remove all connections and callbacks.
                 Service::shared_ptr mservice_ref;
                 if (mservice && mservice->hasService(name) ) {
@@ -200,10 +215,15 @@ namespace RTT
     }
 
     void DataFlowInterface::removeLocalPort(const std::string& name) {
+        if (getOwner() && getOwner()->base::TaskCore::isRunning())
+            throw std::runtime_error("Cannot remove a port of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
         for ( Ports::iterator it(mports.begin());
               it != mports.end();
               ++it)
             if ( (*it)->getName() == name ) {
+                if (!(*it)->connectionChangeAllowed())
+                    throw std::runtime_error("Cannot remove a port while a connected component is running");
                 (*it)->disconnect(); // remove all connections and callbacks.
                 (*it)->setInterface(0);
                 mports.erase(it);
@@ -268,14 +288,11 @@ namespace RTT
 
     void DataFlowInterface::clear()
     {
-        // remove TaskObjects:
-        for ( Ports::iterator it(mports.begin());
-              it != mports.end();
-              ++it) {
-            if (mservice)
-                mservice->removeService( (*it)->getName() );
-        }
-        mports.clear();
+        if (mports.empty()) return;
+        if (getOwner() && getOwner()->base::TaskCore::isRunning())
+            throw std::runtime_error("Cannot clear ports of a running component");
+        if (getOwner()) getOwner()->invalidateConnections();
+        while (!mports.empty()) removePort(mports.back()->getName());
     }
 
     bool DataFlowInterface::chkPtr(const std::string & where, const std::string & name, const void *ptr)
