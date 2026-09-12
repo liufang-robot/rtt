@@ -303,7 +303,7 @@ namespace RTT
                         return base::ChannelElementBase::shared_ptr();
                     }
 
-                    buffer = buildDataStorage<T>(policy, port.getLastWrittenValue());
+                    buffer = buildDataStorage<T>(policy, port.data());
                     if (!buffer) return base::ChannelElementBase::shared_ptr();
 
                     // For PerOutputPort connections, the buffer is installed BEFORE the output endpoint!
@@ -340,7 +340,7 @@ namespace RTT
 
             // Create buffer for PerConnection PULL connections
             if (policy.buffer_policy == PerConnection && pull == ConnPolicy::PULL && !force_unbuffered) {
-                buffer = buildDataStorage<T>(policy, port.getLastWrittenValue());
+                buffer = buildDataStorage<T>(policy, port.data());
                 if (!buffer) return base::ChannelElementBase::shared_ptr();
                 return endpoint->connectTo(buffer, policy.mandatory) ? buffer : base::ChannelElementBase::shared_ptr();
             }
@@ -501,7 +501,7 @@ namespace RTT
             // create a new shared connection instance
             if (!shared_connection) {
                 RTT::OutputPort<T> *output_p = dynamic_cast<RTT::OutputPort<T> *>(output_port);
-                typename base::ChannelElement<T>::shared_ptr buffer = buildDataStorage<T>(policy, (output_p ? output_p->getLastWrittenValue() : T()));
+                typename base::ChannelElement<T>::shared_ptr buffer = buildDataStorage<T>(policy, (output_p ? output_p->data() : T()));
                 if (!buffer) return SharedConnectionBase::shared_ptr();
                 shared_connection.reset(new SharedConnection<T>(buffer.get(), policy));
             }
@@ -558,7 +558,7 @@ namespace RTT
                 }
 
                 // local ports, create buffer here.
-                output_half = buildChannelOutput<T>(*input_p, policy, output_port.getLastWrittenValue());
+                output_half = buildChannelOutput<T>(*input_p, policy, output_port.data());
             }
             else
             {
@@ -678,7 +678,7 @@ namespace RTT
             if (!stream_input) return false;
             input_id.release();
 
-            RTT::base::ChannelElementBase::shared_ptr channel_output = ConnFactory::buildChannelOutput<T>(input_port, policy, output_port.getLastWrittenValue());
+            RTT::base::ChannelElementBase::shared_ptr channel_output = ConnFactory::buildChannelOutput<T>(input_port, policy, output_port.data());
             if (!channel_output) return false;
 
             std::unique_ptr<StreamConnID> output_id(new StreamConnID(policy.name_id));

@@ -42,9 +42,14 @@
 #include "DataFlowInterface.hpp"
 #include "../internal/ConnInputEndPoint.hpp"
 #include "../internal/ConnFactory.hpp"
+#include "../internal/CyclicDataFlow.hpp"
+#include "../TaskContext.hpp"
 #include "../Logger.hpp"
+#include <algorithm>
 #include <exception>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 #include <../os/traces.h>
 
 using namespace RTT;
@@ -74,6 +79,62 @@ InputPortInterface::~InputPortInterface()
 ConnPolicy InputPortInterface::getDefaultPolicy() const
 { return default_policy; }
 
+namespace {
+// Shared channels may have several producers. getInput() alone would select
+// only the last signalling branch and would report a misleading source.
+void sharedSources(ChannelElementBase::shared_ptr channel, InputPortInterface::SourceConnections& result)
+{
+    std::vector<ChannelElementBase::shared_ptr> pending(1, channel);
+    std::set<ChannelElementBase*> visited;
+    const size_t before = result.size();
+    while (!pending.empty()) {
+        ChannelElementBase::shared_ptr current = pending.back();
+        pending.pop_back();
+        if (!current || !visited.insert(current.get()).second) continue;
+        if (const OutputPortInterface* output = dynamic_cast<const OutputPortInterface*>(current->getPort())) {
+            result.push_back(InputPortInterface::SourceConnection{output->getFullName(), "", ""});
+            continue;
+        }
+        if (MultipleInputsChannelElementBase* multiple = dynamic_cast<MultipleInputsChannelElementBase*>(current.get())) {
+            const MultipleInputsChannelElementBase::Inputs inputs = multiple->getInputs();
+            pending.insert(pending.end(), inputs.begin(), inputs.end());
+            if (!inputs.empty()) continue;
+        } else if (ChannelElementBase::shared_ptr input = current->getInput()) {
+            pending.push_back(input);
+            continue;
+        }
+        result.push_back(InputPortInterface::SourceConnection{"", "", ""});
+    }
+    if (result.size() == before) result.push_back(InputPortInterface::SourceConnection{"", "", ""});
+}
+}
+
+InputPortInterface::SourceConnections InputPortInterface::getSourceConnections() const
+{
+    SourceConnections result;
+    if (iface && iface->getOwner())
+        result = iface->getOwner()->cyclicDataFlow().sources(*this);
+
+    // Retain the input lock while inspecting physical descriptors. Graph changes
+    // and endpoint destruction still require the caller's topology serialization.
+    internal::PortConnectionLock lock(const_cast<InputPortInterface*>(this));
+    const internal::ConnectionManager::Connections connections = cmanager.getConnections();
+    for (const auto& connection : connections) {
+        const internal::ConnID* id = boost::get<0>(connection).get();
+        const internal::LocalConnID* local = dynamic_cast<const internal::LocalConnID*>(id);
+        const OutputPortInterface* output = local ? dynamic_cast<const OutputPortInterface*>(local->ptr) : 0;
+        if (output) result.push_back(SourceConnection{output->getFullName(), "", ""});
+        else if (const internal::SharedConnID* shared = dynamic_cast<const internal::SharedConnID*>(id))
+            sharedSources(shared->connection, result);
+        else result.push_back(SourceConnection{"", "", ""});
+    }
+    std::sort(result.begin(), result.end(), [](const SourceConnection& a, const SourceConnection& b) {
+        return std::tie(a.destinationMember, a.sourcePort, a.sourceMember) <
+               std::tie(b.destinationMember, b.sourcePort, b.sourceMember);
+    });
+    return result;
+}
+
 #ifdef ORO_SIGNALLING_PORTS
 InputPortInterface::NewDataOnPortEvent* InputPortInterface::getNewDataOnPortEvent()
 {
@@ -102,7 +163,7 @@ bool InputPortInterface::connectTo(PortInterface* other)
 
 bool InputPortInterface::addConnection(ConnID* cid, ChannelElementBase::shared_ptr channel, const ConnPolicy& policy)
 {
-    // input ports don't check the connection policy.
+    if (!prepareConnectionChange()) return false;
     return cmanager.addConnection( cid, channel, policy);
 }
 
@@ -119,13 +180,13 @@ void InputPortInterface::signalInterface(bool true_false)
 }
 #endif
 
-FlowStatus InputPortInterface::read(DataSourceBase::shared_ptr, bool)
-{ throw std::runtime_error("calling default InputPortInterface::read(datasource) implementation"); }
+FlowStatus InputPortInterface::receive(DataSourceBase::shared_ptr, bool)
+{ throw std::runtime_error("calling default InputPortInterface::receive(datasource) implementation"); }
 
 /** Returns true if this port is connected */
 bool InputPortInterface::connected() const
 {
-    return getEndpoint()->connected();
+    return getEndpoint()->connected() || hasMemberConnections();
 }
 
 void InputPortInterface::traceRead([[maybe_unused]] RTT::FlowStatus status)
@@ -135,16 +196,21 @@ void InputPortInterface::traceRead([[maybe_unused]] RTT::FlowStatus status)
 
 void InputPortInterface::disconnect()
 {
+    if (!prepareConnectionChange()) return;
+    disconnectMemberConnections();
     cmanager.disconnect();
 }
 
 bool InputPortInterface::disconnect(PortInterface* port)
 {
-    return cmanager.disconnect(port);
+    if (!prepareConnectionChange() || (port && !port->prepareConnectionChange())) return false;
+    const bool mapped = disconnectMemberConnections(port);
+    return cmanager.disconnect(port) || mapped;
 }
 
 bool InputPortInterface::createConnection( internal::SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy )
 {
+    if (hasMemberConnections() || !prepareConnectionChange()) return false;
     return internal::ConnFactory::createSharedConnection(0, this, shared_connection, policy);
 }
 

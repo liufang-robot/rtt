@@ -42,6 +42,8 @@
 #include "PortInterface.hpp"
 #include "DataSourceBase.hpp"
 
+namespace RTT { namespace internal { class PortDataAccess; } }
+
 namespace RTT
 { namespace base {
 
@@ -51,6 +53,11 @@ namespace RTT
      */
     class RTT_API OutputPortInterface : public PortInterface
     {
+    private:
+        friend class internal::PortDataAccess;
+        virtual DataSourceBase::shared_ptr imageSource() { return {}; }
+        virtual WriteStatus commitImage() { return WriteFailure; }
+        virtual WriteStatus publish(DataSourceBase::shared_ptr source);
     protected:
         /**
          * Upcall to OutputPort.
@@ -70,25 +77,7 @@ namespace RTT
 
         virtual ~OutputPortInterface();
 
-        /**
-         * Returns true if this port records the last written value.
-         */
-        virtual bool keepsLastWrittenValue() const = 0;
-
-        /**
-         * Change the setting for keeping the last written value.
-         * Setting this to false will clear up any unneeded storage.
-         * If set, this port can initialize new connections with a data sample and
-         * allows real-time data transport of dynamically sized objects
-         * over its newly created connections.
-         * @see OutputPort::OutputPort.
-         */
-        virtual void keepLastWrittenValue(bool new_flag) = 0;
-
-        /**
-         * Returns a Data source that stores the last written value, or
-         * a null pointer if this port does not keep its last written value.
-         */
+        /** Observe committed output storage without publishing the working image. */
         virtual DataSourceBase::shared_ptr getDataSource() const = 0;
 
         virtual void disconnect();
@@ -97,11 +86,6 @@ namespace RTT
          * port's list of outputs
          */
         virtual bool connected() const;
-
-        /**
-         * Write this port using the value stored in source.
-         */
-        virtual WriteStatus write(DataSourceBase::shared_ptr source);
 
         /** Connects this write port to the given read port, using a single-data
          * policy with the given locking mechanism

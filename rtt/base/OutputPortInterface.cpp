@@ -60,29 +60,34 @@ OutputPortInterface::~OutputPortInterface()
 /** Returns true if this port is connected */
 bool OutputPortInterface::connected() const
 {
-    return getEndpoint()->connected();
+    return getEndpoint()->connected() || hasMemberConnections();
 }
 
 bool OutputPortInterface::disconnect(PortInterface* port)
 {
-    return cmanager.disconnect(port);
+    if (!prepareConnectionChange() || (port && !port->prepareConnectionChange())) return false;
+    const bool mapped = disconnectMemberConnections(port);
+    return cmanager.disconnect(port) || mapped;
 }
 
 void OutputPortInterface::disconnect()
 {
+    if (!prepareConnectionChange()) return;
+    disconnectMemberConnections();
     cmanager.disconnect();
 }
 
 bool OutputPortInterface::addConnection(ConnID* port_id, ChannelElementBase::shared_ptr channel_input, ConnPolicy const& policy)
 {
+    if (!prepareConnectionChange()) return false;
     if ( this->connectionAdded(channel_input, policy) ) {
         return cmanager.addConnection(port_id, channel_input, policy);
     }
     return false;
 }
 
-WriteStatus OutputPortInterface::write(DataSourceBase::shared_ptr)
-{ throw std::runtime_error("calling default OutputPortInterface::write(datasource) implementation"); }
+WriteStatus OutputPortInterface::publish(DataSourceBase::shared_ptr)
+{ throw std::runtime_error("calling default OutputPortInterface::publish(datasource) implementation"); }
 
 bool OutputPortInterface::createDataConnection( InputPortInterface& input, int lock_policy )
 { return createConnection( input, ConnPolicy::data(lock_policy) ); }
@@ -95,6 +100,7 @@ bool OutputPortInterface::createConnection( InputPortInterface& input )
 
 bool OutputPortInterface::createConnection( internal::SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy )
 {
+    if (!prepareConnectionChange()) return false;
     return internal::ConnFactory::createSharedConnection(this, 0, shared_connection, policy);
 }
 

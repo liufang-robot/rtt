@@ -97,6 +97,9 @@ IF (BUILD_TESTING)
       list(APPEND ORO_EXTRA_TESTS "list-test")
     endif()
 
+    ADD_UNIT_TEST(cyclic_ports_test ORO_EXTRA_TESTS "${TEST_LIBRARIES}")
+    ADD_UNIT_TEST(cyclic_dataflow_test ORO_EXTRA_TESTS "${TEST_LIBRARIES}")
+
     # repeat for each test
     ADD_EXECUTABLE( core-test test-runner.cpp logger_test.cpp time_test.cpp ptr_test.cpp )
     TARGET_LINK_LIBRARIES( core-test orocos-rtt-${OROCOS_TARGET}_dynamic ${TEST_LIBRARIES})

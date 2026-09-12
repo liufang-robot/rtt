@@ -252,6 +252,12 @@ bool MultipleInputsChannelElementBase::connected()
     return inputs.size() > 0;
 }
 
+MultipleInputsChannelElementBase::Inputs MultipleInputsChannelElementBase::getInputs() const
+{
+    RTT::os::SharedMutexLock lock(inputs_lock);
+    return inputs;
+}
+
 bool MultipleInputsChannelElementBase::inputReady(ChannelElementBase::shared_ptr const&)
 {
     RTT::os::SharedMutexLock lock(inputs_lock);
@@ -474,4 +480,3 @@ void RTT::base::intrusive_ptr_add_ref( ChannelElementBase* p )
 
 void RTT::base::intrusive_ptr_release( ChannelElementBase* p )
 { if ( oro_atomic_dec_and_test(&p->refcount) ) delete p; }
-

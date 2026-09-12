@@ -341,6 +341,9 @@ namespace RTT { namespace base {
     public:
         MultipleInputsChannelElementBase();
 
+        /** Copy all upstream channels for topology inspection, without consuming data. */
+        Inputs getInputs() const;
+
         /**
          * Returns true, if this channel element has at least one input, independent of whether is has an
          * output connection or not.
@@ -483,4 +486,3 @@ namespace RTT { namespace base {
 }}
 
 #endif
-

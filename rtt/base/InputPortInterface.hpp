@@ -40,6 +40,8 @@
 #define ORO_INPUT_PORT_INTERFACE_HPP
 
 #include <string>
+#include <atomic>
+#include <vector>
 #include "PortInterface.hpp"
 #include "ChannelElement.hpp"
 #include "../internal/rtt-internal-fwd.hpp"
@@ -48,6 +50,8 @@
 #include "../internal/Signal.hpp"
 #endif
 #include "../base/DataSourceBase.hpp"
+
+namespace RTT { namespace internal { class PortDataAccess; } }
 
 namespace RTT
 { namespace base {
@@ -65,7 +69,14 @@ namespace RTT
         typedef NewDataOnPortEvent::SlotFunction SlotFunction;
 #endif
 
+    private:
+        friend class internal::PortDataAccess;
+        virtual DataSourceBase::shared_ptr imageSource() { return {}; }
+        virtual FlowStatus refreshImage() { return NoData; }
+        virtual FlowStatus receive(DataSourceBase::shared_ptr source, bool copy_old_data);
+        virtual void setImageStatus(FlowStatus value) { image_status_.store(value); }
     protected:
+        std::atomic<FlowStatus> image_status_{NoData};
         ConnPolicy        default_policy;
 #ifdef ORO_SIGNALLING_PORTS
         NewDataOnPortEvent* new_data_on_port_event;
@@ -80,6 +91,26 @@ namespace RTT
         void traceRead(RTT::FlowStatus status);
         InputPortInterface(const InputPortInterface& orig);
     public:
+
+        /** One logical writer of this input, copied for inspection. */
+        struct SourceConnection {
+            std::string sourcePort;       //!< Qualified registered output name; empty if unavailable.
+            std::string sourceMember;     //!< Canonical selector; empty means the whole output.
+            std::string destinationMember; //!< Canonical selector; empty means this whole input.
+        };
+        typedef std::vector<SourceConnection> SourceConnections;
+
+        /**
+         * Describe current whole-port and member connections without reading data.
+         * Entries are sorted by destination selector, source port and source selector.
+         * An opaque transport connection has an empty sourcePort, rather than an
+         * invented local endpoint. Returned strings remain valid after disconnect.
+         *
+         * This allocates inspection data and is not a realtime operation. It may
+         * run alongside component cycles with a frozen graph. As with port/service
+         * traversal, callers must serialize it with topology changes and destruction.
+         */
+        SourceConnections getSourceConnections() const;
 
         InputPortInterface(std::string const& name, ConnPolicy const& default_policy = ConnPolicy());
 
@@ -99,12 +130,8 @@ namespace RTT
          */
         virtual DataSourceBase* getDataSource() = 0;
 
-        /** Reads the port and updates the value hold by the given data source.
-         * This is only valid for local ports.
-         *
-         * \a source has to be an assignable data source
-         */
-        virtual FlowStatus read(DataSourceBase::shared_ptr source, bool copy_old_data = true);
+        /** Freshness of the image prepared for this cycle; no channel access. */
+        FlowStatus status() const noexcept { return image_status_.load(std::memory_order_acquire); }
 
         /** Removes any connection that either go to or come from this port
          *  *and* removes all callbacks and cleans up the NewDataOnPortEvent.

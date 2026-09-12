@@ -491,49 +491,12 @@ Hello [R]> <command>the_attribute</command>
       </screen>
     </section>
     <section>
-      <title>Reading and Writing Ports</title>
-      <para>
-	The Data Ports allow seamless communication of calculation or 
-	measurement results between components. Adding and using ports is
-	described in <xref linkend="task-ports" />.
-      </para>
-<!--
-      <para>
-	Since each port has an associated service, we can inspect the
-	interface of a port by typing its name:
-      </para>
-      <screen>
-Hello [R]> the_input_port
-
-Printing Interface of 'the_input_port' :
-
- <emphasis>connected</emphasis>( ) : bool
-   Check if this port is connected and ready for use.
- <emphasis>disconnect</emphasis>( ) : void
-   Disconnects this port from any connection it is part of.
- <emphasis>name</emphasis>( ) : string const&amp;
-   Returns the port name.
- <emphasis>read</emphasis>( string &amp; sample ) : FlowStatus
-   Reads a sample from the port.
-   sample :
-      </screen>
-      <para>
-	The the_input_port service has four methods: connected(), disconnect(),
-	name() and read(). Since it's an input port, it makes sense that you can
-	read it.
-      </para>
-      <screen>
- Hello [R]> <command>the_input_port.read(the_attribute)</command>
- = <emphasis>NoData</emphasis>
-      </screen>
-      <para>
-	When an input port is read(), it will fill in the argument with the latest
-	data and inform you of the 'freshness' of the data: NoData, OldData or NewData.
-	NoData is returned for unconnected ports, or empty connections.
-	Writing to an outputport (using write() ) returns no value, it's purely send
-	and forget. Writing to an unconnected output port is not an error.
-      </para>
--->
+      <title>Observing Cyclic Ports</title>
+      <para>Components access typed input and output images from updateHook().
+      The execution engine refreshes inputs and publishes completed outputs.
+      TaskBrowser observes snapshots; input status() reports freshness and output
+      snapshot() returns the last committed value. Observing a port never consumes
+      a pending input sample or publishes an output image.</para>
     </section>
 <!--
     <section>
@@ -952,9 +915,8 @@ Hello [R]&gt;
         */
        void updateHook() {
           // Your algorithm for periodic execution goes inhere
-          double result;
-          if ( inPort.read(result) == NewData )
-              outPort.write( result * 2.0 ); // only write if new data arrived.
+          outPort.data() = inPort.data() * 2.0;
+          // The engine publishes this image after a successful updateHook().
        }
 
   };</programlisting></para>
@@ -1024,301 +986,100 @@ Hello [R]&gt;
       </section>
     </section>
     <section id="task-ports">
-      <title>Data Flow Ports</title>
-      <note><title>Purpose</title>
-	<para>A component has ports in order to send or receive a
-	  stream of data. The algorithm writes Output ports to publish
-	  data to other components, while input ports allow an
-	  algorithm to receive data from other components.  A
-	  component can be woken up if data arrives at one or more
-	  input ports or it can 'poll' for new data on its input
-	  ports.
-	</para>
-	<para>
-	  Reading and writing data ports is always real-time and
-	  thread-safe, on the condition that copying your data
-	  (i.e. your operator= ) is as well.
-	</para>
-      </note>
-      <para>
-	Each component defines its data exchange ports and connections
-	transmit data from one port to another. A Port is defined by a
-	name, unique within that component, the data type it wants to
-	exchange and if its for reading (Input) or writing (Output) data samples.
-	Finally,
-	you can opt that new data on selected Input ports wake up your task.
-	The example below shows all these possibilities.
-      </para>
-      <para>
-	Each connection between an Output port and an Input port can
-	be tuned for your setup: buffering of data, thread-safety
-	and initialisation of the connection are parameters provided
-	by the user when the connection is created. We call these
-	<emphasis>Connection Policies</emphasis> and use the
-	<classname>RTT::ConnPolicy</classname>
-	object when creating the connection between ports.
-      </para>
-      <figure id="fig-data-flow-ports">
-	<title>
-	  Data flow ports are connected with a connection policy
-	</title>
-	<mediaobject>
-	  <imageobject role="html">
-	    <imagedata fileref="images/DataFlowPorts" />
-	  </imageobject>
-	  <imageobject role="fo">
-	    <imagedata fileref="images/hires/DataFlowPorts"  width="80%" scalefit="1"/>
-	  </imageobject>
-	  <caption>
-	    <para>
-	      This figure shows that input and output ports
-	      can be connected in an N:M way. See
-	      <xref linkend="setup-data-flow" /> on how to connect ports and
-	      which connection policy to choose.
-	    </para>
-	  </caption>
-	</mediaobject>
-      </figure>
+      <title>Automatic Cyclic Data Ports</title>
+      <para>RTT::TaskContext owns the component cycle, including ports registered
+      in nested RTT::Service objects. Each InputPort&lt;T&gt; owns a value-initialized
+      input image; each OutputPort&lt;T&gt; owns a working output image. Components
+      access these through data(). There are no public port read(), readNewest(),
+      or write() operations.</para>
       <section>
-	<title>Which data can be transfered ?</title>
-	<para>
-	  The data flow implementation can pass on any data type 'X', given
-	  that its class provides:
-	  <itemizedlist>
-	    <listitem><para>A default constructor: X::X()</para></listitem>
-	    <listitem><para>An assignment operator: const X&amp; X::operator=(const X&amp; )</para></listitem>
-	  </itemizedlist>
-	  For real-time data transfer (see also <xref
-	  linkend="guarantee-rt-data-flow" />) the operator= must be
-	  real-time when assigning equal sized objects. When assigning not
-	  equal sized objects, your operator= should free the memory and
-	  allocate enough room for the new size.
-	</para>
-	<para>
-	  In addition, if you want to send your data out of your
-	  process to another process or host, it will additionally
-	  need:
-	  <itemizedlist>
-	    <listitem><para>Registration of 'X' with the type system (see the manual about Typekits)</para></listitem>
-	    <listitem><para>A transport for the data type registered with the type system (see the transport (ROS,CORBA,MQueue,...) documentation)</para></listitem>
-	  </itemizedlist>
-	  The standard C++ and std::vector&lt;double> data types are
-	  already included in the RTT library for real-time transfer
-	  and out of process transport.
-	</para>
+        <title>Registering and Using Ports</title>
+        <programlisting>#include &lt;rtt/TaskContext.hpp&gt;
+#include &lt;rtt/Port.hpp&gt;
+
+class Amplifier : public RTT::TaskContext {
+    RTT::InputPort&lt;double&gt; input{"input"};
+    RTT::OutputPort&lt;double&gt; output{"output"};
+public:
+    explicit Amplifier(const std::string&amp; name) : RTT::TaskContext(name) {
+        addPort(input);
+        addPort(output);
+    }
+    void updateHook() override {
+        output.data() = 2.0 * input.data();
+    }
+};</programlisting>
+        <para>Input data() returns a const reference. Output data() returns a
+        mutable reference, which must only be modified in the owning execution
+        context. Before updateHook(), the engine acquires available input samples.
+        After the hook returns while the component remains in Running, it commits
+        the output images. A hook that enters error, requests a stop, or throws
+        does not publish its partially computed output.</para>
+        <para>NewData means the input image acquired a new publication at its
+        latest boundary. OldData means it retained a previously acquired value.
+        NoData means no sample has arrived; the configured or value-initialized
+        image remains usable. status() never consumes a sample. Ordinary hooks
+        are not withheld while waiting for a first publication.</para>
+        <para>Register service ports using service->addPort(port), and attach the
+        service to the component's provides() tree. All depths participate in the
+        same component boundary. An EventPort may wake a component for incoming
+        state; it does not promise one hook invocation per source publication.</para>
       </section>
       <section>
-	<title>Setting up the Data Flow Interface</title>
-	<para>
-	  Any kind of data can be exchanged (also user defined C/C++ types)
-	  but for readability, only the 'double' C type is used here.
-	  <programlisting>  #include &lt;rtt/Port.hpp&gt;
-  using namespace RTT;
+        <title>Whole Values and Member Connections</title>
+        <para>Whole ports continue to connect when their types match. A connection
+        may also select a scalar, nested structure, fixed array, or fixed-array
+        element. The selected source and destination types must match exactly;
+        there is no implicit numeric conversion. Member selection needs typekit
+        member metadata. Supported opaque types may still connect as whole values.</para>
+        <programlisting>// OCL deployment script, after loading the named components:
+connectPort("Source.motion.output", "Sink.motion.input")
 
-  class MyTask
-    : public <classname>RTT::TaskContext</classname>
-  {
-    // Input port: We'll let this one wake up our thread
-    <classname>RTT::InputPort</classname>&lt;double&gt; evPort;
-
-    // Input port: We will poll this one
-    <classname>RTT::InputPort</classname>&lt;double&gt; inPort;
-
-    // Output ports are allways 'send and forget'
-    <classname>RTT::OutputPort</classname>&lt;double&gt; outPort;
-  public:
-    // ...
-    MyTask(std::string name)
-      : <classname>RTT::TaskContext</classname>(name)
-    {
-       // an 'EventPort' is an InputPort which wakes our task up when data arrives.
-       this->ports()->addEventPort( "evPort", evPort ).doc( "Input Port that raises an event." );
-
-       // These ports do not wake up our task
-       this->ports()->addPort( "inPort", inPort ).doc( "Input Port that does *not* raise an event." );
-       this->ports()->addPort( "outPort", outPort ).doc( "Output Port, here write our data to." );
-
-       // more additions to follow, see below
-     }
-
-     // ...
-  };</programlisting>
-      </para>
-      <para>
-	The example starts with declaring all the ports of MyTask. A
-	template parameter '&lt;double&gt;' specifies the type of data
-	the task wants to exchange through that port. Logically, if
-	input and output are to be connected, they must agree on this type.
-	The name is given in the addPort() function. This
-	name can be used to 'match' ports between connected tasks
-	( using 'connectPorts', see <xref linkend="connect-tasks" /> ),
-	but it is possible <emphasis>and preferred</emphasis> to connect Ports with different names
-	using the Orocos deployer.
-      </para>
-      <para>
-	There are two ways to add a port to the TaskContext interface:
-	using <function>addPort()</function>
-	or <function>addEventPort()</function>. In the latter case,
-	new data arriving on the port will wake up ('trigger') the
-	activity of our TaskContext and updateHook() get's executed.
-      </para>
-      <note>
-	<para>
-	  Only <classname>RTT::InputPort</classname> can be added as EventPort and
-	  will cause your component to be triggered (ie wake up and
-	  call updateHook).
-	</para>
-	</note>
+// Alternative wiring: Input.x and Input.y have different source ports.
+connectMember("SourceA.output", "x", "Sink.input", "x")
+connectMember("SourceB.output", "y", "Sink.input", "y")
+finalizeConnections()</programlisting>
+        <para>An empty member path selects the whole value. For example,
+        connectMember("Source.scalar", "", "Sink.input", "y") connects a scalar
+        output to a member, and reversing the empty selector supports member-to-whole.
+        Nested selectors use syntax such as axes[2].position. The service/port path
+        and the data-member selector are separate arguments.</para>
+        <para>Each destination region has one writer. Sources may fill disjoint
+        members of one input, but overlapping members, a parent and its child, or
+        a whole input plus one of its members cannot have separate writers.
+        finalizeConnections() resolves paths and validates types and array shapes
+        while stopped. start() also ensures a valid prepared plan. Stop all affected
+        components before changing connections, ports, services containing ports,
+        or configured storage shape.</para>
       </section>
       <section id="guarantee-rt-data-flow">
-	<title>Guaranteeing Real-Time data flow</title>
-	<para>
-	  The data flow implementation is written towards hard real-time data
-	  transfer, if the data type allows it. Simple data types, like
-	  a double or struct with only data which can be copied without
-	  causing memory allocations work out of the box. No special measures
-	  must be taken and the port is immediately ready to use.
-	</para>
-	<para>
-	  If however, your type is more complex, like a std::vector
-	  or other dynamically sized object, additional setup steps
-	  must be done. First, the type must guarantee that its
-	  operator=() is real-time in case two equal-sized objects
-	  are used. Second, before sending the first data
-	  to the port, a properly sized data sample must be given
-	  to the output port. An example:
-	  <programlisting>  OutputPort&lt;std::vector&lt;double> > myport("name");
-
-  // create an example data sample of size 10:
-  std::vector&lt;double> example(10, 0.0);
-
-  // show it to the port (this is a not real-time operation):
-  myport.setDataSample( example );
-	    
-  // Now we are fine ! All items sent into the port of size 10 or less will
-  // be passed on in hard real-time.  
-  myport.write( example ); // hard real-time.
-</programlisting>
-          setDataSample does not actually send the data to all receivers,
-	  it just uses this sample to initiate the connection, such that
-	  any subsequent writes to the port with a similar sample will
-	  be hard real-time. If you omit this call, data transfer will
-	  proceed, but the RTT makes no guarantees about real-timeness
-	  of the transfer.
-	</para>
-	<para>
-	  The same procedure holds if you use transports to send data
-	  to other processes or hosts. However, it will be the transport
-	  protocol that determines if the transfer is real-time or not.
-	  For example, CORBA transports are not hard real-time, while
-	  MQueue transports are.
-	</para>
+        <title>Real-Time Preparation</title>
+        <para>The cycle executes prepared input transfers, assignments, and output
+        commits. It performs no path parsing or service traversal. Fixed values
+        with bounded, allocation-free copy operations support allocation-free
+        steady-state execution. This property does not prove a hard worst-case
+        latency bound: channel synchronization, user copy operators, transport,
+        activity scheduling, and the target platform also matter.</para>
+        <para>Set representative samples and capacity with setDataSample() on
+        input and output ports before activation when using dynamically allocated
+        whole values. Do not grow such values during real-time execution. Dynamic
+        containers cannot provide stable element selectors; use fixed arrays for
+        element connections. State ports use latest-value channels, and buffered
+        component inputs or multiple whole-port writers fail finalization.</para>
+        <para>The boundary is per component. Independent components can observe
+        different source cycles. Connecting fields from several sources does not
+        create a simultaneous global snapshot of those sources.</para>
       </section>
       <section>
-	<title>Using the Data Flow Interface in C++</title>
-	<para>
-	  The Data Flow interface is used by your task from within
-	  the program scripts or its <function>updateHook()</function>
-	  method. Logically the script or method reads the inbound
-	  data, calculates something and writes the outbound data.
-	</para>
-	<programlisting>  #include &lt;rtt/Port.hpp&gt;
-  using namespace RTT;
-
-  class MyTask
-    : public <classname>RTT::TaskContext</classname>
-  {
-     // ...Constructor sets up Ports, see above.
-
-     bool startHook() {
-       // Check validity of (all) Ports:
-       if ( !inPort.connected() ) {
-          // No connection was made, can't do my job !
-          return false;
-       }
-       if ( !outPort.connected() ) {
-          // ... not necessarily an error, a connection may be
-          // made while we are running.
-       }
-       return true;
-     }
-
-     /**
-      * Note: use updateHook(const std::vector&lt;PortInterface*&gt;&amp;)
-      * instead for having information about the updated event 
-      * driven ports.
-      */
-     void updateHook() {
-
-       double val = 0.0; 
-
-       // Possible return values are: NoData, OldData and NewData.
-       if ( inPort.read(val) == RTT::NewData ) {
-         // <emphasis>update val...</emphasis>
-         outPort.write( val );
-       }
-     }
-     // ...
-  };</programlisting>
-	<para>
-	  It is wise to check in the <function>startHook()</function>
-	  ( or earlier: in <function>configureHook()</function> )
-	  function if all necessary ports are
-	  <function>connected()</function>.  At this point, the task
-	  start up can still be aborted by returning false. Otherwise,
-	  a write to an unconnected output port will be discarded,
-	  while a read from an unconnected input port returns NoData.
-	</para>
-      </section>
-      <section>
-	<title>Using Data Flow in Scripts</title>
-	<para>
-	  When a Port is added, it becomes available to the
-	  Orocos scripting system such that (part of) the calculation
-	  can happen in a script. Also, the TaskBrowser can then
-	  be used to inspect the contents of the DataFlow on-line.
-	</para>
-	<note><para>In scripting, it is currently not yet possible to 
-	    know which event port woke your task up.</para></note>
-	<para>
-	  A small program script could be loaded into MyTask with
-	  the following contents:
-	  <programlisting>  program MyControlProgram {
-    var Float64 the_K  = K        // read task property, see later.
-    var Float64 setp_d
-
-    while ( true ) {
-      if ( SetPoint_X.read( setp_d ) != NoData ) {   // read Input Port
-        var Float64 in_d = 0.0;
-        Data_R.read( in_d )             // read Input Port
-        var Float64 out_d = (setp_d - in_d) * the_K  // Calculate
-        Data_W.write( out_d )          // write Data Port
-      }
-      yield       // this is a 'yield' point to avoid inifinite spinning.
-    }
-  } </programlisting>
-         The program "MyControlProgram" starts with declaring
-	 two variables and reading the task's Property 'K'.
-	 Then it goes into an endless loop, trying to Pop
-	 a set point value from the "SetPoint_X" Port. If that succeeds (new or old data present)
-	 the  "Data_R" Port is read and a simple 
-	 calculation is done. The result is written to the
-	 "Data_W" OutputPort and can now be read by the other
-	 end(s). Alternatively, the result may be directly
-	 used by the Task in order to write it to a device
-	 or any non-task object. You can use methods (below)
-	 to send data from scripts back to the C++ implementation.
-	</para>
-	<para>
-	  Remark that the program is executed within the thread of the component.
-	  In order to avoid the endless loop, a 'wait' point
-	  must be present. The "yield" command inserts such a
-	  wait point and is part of the Scripting syntax.  If you plan
-	  to use Scripting state machines, such a
-	  <function>while(true)</function> loop (and hence wait point)
-	  is not necessary. See the Scripting Manual for a full
-	  overview of the syntax.
-	</para>
+        <title>Observation and Scripts</title>
+        <para>Input status() and output snapshot() service operations are
+        non-consuming observers. Reporting and network observers use synchronized
+        committed snapshots. Network ingress stages data until the destination's
+        next input boundary. Port services provide no manual transfer operations.</para>
+        <para>Discrete commands belong in operations; state machines can observe
+        component attributes or observation operations. Legacy port-event transition
+        syntax is removed. Lua component code may access the owning port's data()
+        image; output edits are committed by its component cycle.</para>
       </section>
     </section>
     <section id="task-operations">
@@ -1986,13 +1747,13 @@ Hello [R]&gt;
        {}
 
  protected:
-       // Read data from a buffer.
+       // Inspect the input image prepared by the engine.
        // If ok, process data. When to many faults occur,
        // trigger a runtime error.
        void updateHook()
        {
-            Data_t data;
-            FlowStatus rv = input.read( data );
+            const Data_t&amp; data = input.data();
+            FlowStatus rv = input.status();
             if ( rv == NewData ) {
                this->stateUpdate(data);
                faults = 0;
@@ -2008,7 +1769,8 @@ Hello [R]&gt;
        // Called instead of updateHook() when in runtime error state.
        void errorHook()
        {
-            this->updateHook(); // just call updateHook anyway.
+            // A supervisor may call recover() when the device is ready.
+            // Input/output cycles resume on the next Running updateHook().
        }
 
        // Called by updateHook()

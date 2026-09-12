@@ -62,7 +62,7 @@ namespace RTT
             typedef boost::intrusive_ptr<DataObjectDataSource<T> > shared_ptr;
 
             DataObjectDataSource(typename base::DataObjectInterface<T>::shared_ptr obj)
-            : mobject(obj)
+            : mobject(obj), mcopy()
               {}
 
             virtual ~DataObjectDataSource() { }

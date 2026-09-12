@@ -50,9 +50,11 @@
 
 #include <string>
 #include <map>
+#include <memory>
 
 namespace RTT
 {
+    namespace internal { class CyclicDataFlow; }
     /**
      * The TaskContext is the C++ representation of an Orocos component.
      * It defines which services it provides and requires and which ports are inputs and
@@ -178,6 +180,12 @@ namespace RTT
          * TaskContext is local.
          */
         virtual bool ready();
+
+        /** Validate and prepare all root and nested service cyclic ports while stopped. */
+        bool finalizeConnections();
+        /** Invalidate a prepared plan before changing its topology. */
+        void invalidateConnections();
+        internal::CyclicDataFlow& cyclicDataFlow();
 
         virtual bool start();
         virtual bool stop();
@@ -680,6 +688,7 @@ namespace RTT
         typedef std::map<std::string, boost::shared_ptr<ServiceRequester> > LocalServices;
         LocalServices localservs;
 
+        std::unique_ptr<internal::CyclicDataFlow> mcyclic;
         Service::shared_ptr tcservice;
         ServiceRequester::shared_ptr tcrequests;
         os::Mutex mportlock;
@@ -699,6 +708,10 @@ namespace RTT
      * directions, by matching port names.
      * @see TaskContext::connectPorts
      */
+    /** Connect exactly matching typed members; an empty path selects the whole value. */
+    RTT_API bool connectMembers(base::OutputPortInterface& source, const std::string& sourcePath,
+                               base::InputPortInterface& destination, const std::string& destinationPath);
+
     RTT_API bool connectPorts(TaskContext* A, TaskContext* B);
 
     /**

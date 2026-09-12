@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  mqueue_ipc_server.cpp
 
@@ -90,16 +91,16 @@ void MQueueTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( NoData == mr2->read(value) );
+    BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr2)
-    BOOST_CHECK( mr2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2)
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr2);
-    BOOST_CHECK( mr2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( OldData == mr2->read(value) );
+    BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
 }
@@ -115,20 +116,20 @@ void MQueueTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( NoData == mr2->read(value) );
+    BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(3.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(4.0), 0);  // because size == 3
-    BOOST_CHECK( mr2->read(value) );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);  // because size == 3
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
     BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mr2->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mr2->read(value) );
+    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
     BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK( OldData == mr2->read(value) );
+    BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
 }
@@ -360,7 +361,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
 
     // init the output port with a vector of size 20, values 3.33
     vout.setDataSample( data );
-    data = vout.getLastWrittenValue();
+    data = vout.data();
     for(int i=0; i != 20; ++i)
         BOOST_CHECK_CLOSE( data[i], 3.33, 0.01);
 
@@ -371,7 +372,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     BOOST_CHECK( vin.createStream( policy ) );
 
     // check that the receiver did not get any data
-    BOOST_CHECK_EQUAL( vin.read(data), NoData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), NoData);
 
     // prepare a new data sample, size 10, values 6.66
     data.clear();
@@ -380,7 +381,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
         BOOST_CHECK_CLOSE( data[i], 6.66, 0.01);
 
     rtos_enable_rt_warning();
-    vout.write( data );
+    RTT::internal::PortDataAccess::publish(vout,  data );
     rtos_disable_rt_warning();
 
     // prepare data buffer for reception:
@@ -389,7 +390,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     usleep(200000);
 
     rtos_enable_rt_warning();
-    BOOST_CHECK_EQUAL( vin.read(data), NewData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), NewData);
     rtos_disable_rt_warning();
 
     // check if both size and capacity and values are as expected.
@@ -399,7 +400,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
         BOOST_CHECK_CLOSE( data[i], 6.66, 0.01);
 
     rtos_enable_rt_warning();
-    BOOST_CHECK_EQUAL( vin.read(data), OldData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), OldData);
     rtos_disable_rt_warning();
 }
 

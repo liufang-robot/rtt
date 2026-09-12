@@ -194,6 +194,7 @@ namespace RTT
          * Returns the component this interface belongs to.
          */
         TaskContext* getOwner() const;
+        Service* getServiceInterface() const { return mservice; }
 
         /**
          * Returns the service this interface belongs to.
