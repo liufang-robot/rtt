@@ -45,12 +45,13 @@
 #include "../internal/ConnectionManager.hpp"
 #include "../internal/ConnID.hpp"
 #include "ChannelElementBase.hpp"
+#include "DataSourceBase.hpp"
 #include "../types/rtt-types-fwd.hpp"
 #include "../os/Mutex.hpp"
 #include "../rtt-fwd.hpp"
 
 namespace RTT
-{ namespace internal { class CyclicDataFlow; }
+{ namespace internal { class CyclicDataFlow; class PortDataAccess; }
 namespace base {
 
     /**
@@ -59,6 +60,8 @@ namespace base {
      */
     class RTT_API PortInterface
     {
+        friend class internal::PortDataAccess;
+        base::DataSourceBase::shared_ptr observation_source;
         std::string name;
         std::string fullName;
         std::string mdesc;
@@ -173,11 +176,8 @@ namespace base {
          */
         virtual PortInterface* antiClone() const = 0;
 
-        /**
-         * Create accessor Object for this Port, for addition to a
-         * TaskContext Object interface.
-         */
-        virtual Service* createPortObject();
+        /** Create an independent passive observation, including transport overrides. */
+        base::DataSourceBase::shared_ptr getObservationDataSource() const;
 
         /** Connects this port with \a other, using the given policy. Unlike
          * OutputPortInterface::createConnection, \a other can be the write port

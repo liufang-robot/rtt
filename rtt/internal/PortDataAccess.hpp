@@ -12,6 +12,7 @@ namespace internal {
  * Component algorithms use data(); they must not drive these transfer phases. */
 class PortDataAccess {
 public:
+    static void setObservationSource(base::PortInterface& port, base::DataSourceBase::shared_ptr source) { port.observation_source = source; }
     static base::DataSourceBase::shared_ptr image(base::InputPortInterface& port) { return port.imageSource(); }
     static base::DataSourceBase::shared_ptr image(base::OutputPortInterface& port) { return port.imageSource(); }
     static FlowStatus refresh(base::InputPortInterface& port) { return port.refreshImage(); }

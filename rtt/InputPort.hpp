@@ -131,14 +131,7 @@ public:
     bool createStream(const ConnPolicy& policy) override {
         return prepareConnectionChange() && internal::ConnFactory::createStream(*this, policy);
     }
-#ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
-    Service* createPortObject() override {
-        Service* object = base::InputPortInterface::createPortObject();
-        if (object) object->addSynchronousOperation("status", &InputPort::status, this)
-            .doc("Observe freshness of the current cyclic input image.");
-        return object;
-    }
-#endif
+
     internal::ConnOutputEndpoint<T>* getEndpoint() const override { return endpoint.get(); }
     typename base::ChannelElement<T>::shared_ptr getSharedBuffer() const { return endpoint->getSharedBuffer(); }
 };

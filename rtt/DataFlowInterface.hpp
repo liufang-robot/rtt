@@ -69,16 +69,14 @@ namespace RTT
 
         /**
          * Construct the DataFlow interface of a Service.
-         * @param parent If not null, a Service will be added
-         * to \a parent  for each port added to this interface.
+         * @param parent Owning service used to register ports in the component cycle.
          */
         DataFlowInterface(Service* parent = 0 );
 
         ~DataFlowInterface();
 
         /**
-         * Name and add a Port to the interface of this task and
-         * add a Service with the same name of the port.
+         * Name and register a cyclic Port in this interface.
          * @param name The name to give to the port.
          * @param port The port to add.
          */
@@ -89,25 +87,16 @@ namespace RTT
         }
 
         /**
-         * Add a Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * If a port or service with the name already exists, addPort
-         * will replace them with \a port and log a warning.
+         * Register a cyclic Port. An existing same-name port is replaced;
+         * real services are independent and are preserved.
          * @param port The port to add.
          * @return \a port
          */
         base::PortInterface& addPort(base::PortInterface& port);
 
         /**
-         * Remove a Port from this interface.
-         * This will remove all services and connections
-         * associated with this port.
-         * @param port The port to remove.
-         * @note Since services are refcounted, removePort may effectively
-         * delete the \a this object in case no Service::shared_ptr exists
-         * to this DataFlowInterface. In order to prevent such cleanup,
-         * create a Service::shared_ptr to this object before calling
-         * removePort().
+         * Remove a Port and its connections from this interface.
+         * @param name The port to remove.
          */
         void removePort(const std::string& name);
 
@@ -141,14 +130,8 @@ namespace RTT
         std::string getPortDescription(const std::string& name) const;
 
         /**
-         * Sets the description for the service of an added port.
-         * It's prefered to use getPort(name)->doc(description) instead
-         * of this method, since this function only updates the documentation
-         * of the service representing this port, and not the documentation
-         * stored in the port.
-         * @param name The port name
-         * @param description The new description for this port's service
-         * @return true if the port was found and the description was set, false otherwise.
+         * Set the documentation stored in an added port.
+         * @return true if the port exists.
          */
         bool setPortDescription(const std::string& name, const std::string description);
 
@@ -166,21 +149,13 @@ namespace RTT
         Service* getService() const { return mservice; }
 
         /**
-         * Add a Port to this task without registering a service for it.
-         * If a port with the same name already exists, addPort
-         * will replace it with \a port and log a warning.
-         * @return \a port
+         * Registration alias for addPort(); every registered port participates
+         * in its owner's cyclic I/O, and neither registration creates a service.
          */
         base::PortInterface& addLocalPort(base::PortInterface& port);
 
         /**
-         * Remove a locally added Port from this interface.
-         * This will remove all connections
-         * associated with this port.
-         * @param port The port to remove.
-         * @note this function will not check if a service with the same name
-         * as \a name exists, and will not remove it. So use removePort() in case
-         * you want to get rid of the service as well.
+         * Removal alias for removePort().
          */
         void removeLocalPort(const std::string& name);
 
@@ -194,17 +169,11 @@ namespace RTT
         }
 
         /**
-         * Remove all added ports from this interface and
-         * all associated TaskObjects.
+         * Remove all registered ports and their connections.
          */
         void clear();
 
     protected:
-        /**
-         * Create a Service through which one can access a Port.
-         * @param name The port name
-         */
-        Service* createPortObject(const std::string& name);
 
         bool chkPtr(const std::string &where, const std::string& name, const void* ptr);
         /**

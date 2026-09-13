@@ -20,6 +20,9 @@ public:
     bool connect(base::OutputPortInterface&, const std::string&,
                  base::InputPortInterface&, const std::string&);
     static bool validateWhole(base::OutputPortInterface&, base::InputPortInterface&);
+    static base::DataSourceBase::shared_ptr selectMember(base::DataSourceBase::shared_ptr sample,
+                                                       const std::string& path, std::string* canonical = nullptr);
+    static bool copySample(base::DataSourceBase::shared_ptr source, base::DataSourceBase::shared_ptr destination);
     bool finalize();
     void invalidate();
     bool refresh();

@@ -494,8 +494,8 @@ Hello [R]> <command>the_attribute</command>
       <title>Observing Cyclic Ports</title>
       <para>Components access typed input and output images from updateHook().
       The execution engine refreshes inputs and publishes completed outputs.
-      TaskBrowser observes snapshots; input status() reports freshness and output
-      snapshot() returns the last committed value. Observing a port never consumes
+      TaskBrowser reads ports directly, such as source.output.y or sink.input.
+      Inputs show the last acquired image; outputs show the last commit. Observation never consumes
       a pending input sample or publishes an output image.</para>
     </section>
 <!--
@@ -1040,14 +1040,14 @@ public:
 connectPort("Source.motion.output", "Sink.motion.input")
 
 // Alternative wiring: Input.x and Input.y have different source ports.
-connectPort("SourceA.output::x", "Sink.input::x")
-connectPort("SourceB.output::y", "Sink.input::y")
+connectPort("SourceA.output.x", "Sink.input.x")
+connectPort("SourceB.output.y", "Sink.input.y")
 finalizeConnections()</programlisting>
-        <para>Omitting the ::selector selects the whole value. For example,
-        connectPort("Source.scalar", "Sink.input::y") connects a scalar
+        <para>A bare port selects the whole value. For example,
+        connectPort("Source.scalar", "Sink.input.y") connects a scalar
         output to a member, and omitting the destination selector supports member-to-whole.
-        Nested selectors use syntax such as axes[2].position. The :: delimiter
-        separates the service/port path from the optional data-member selector.</para>
+        Nested selectors use syntax such as axes[2].position. Connections and
+        observations use the same dot/index endpoints; legacy :: selectors are rejected.</para>
         <para>Each destination region has one writer. Sources may fill disjoint
         members of one input, but overlapping members, a parent and its child, or
         a whole input plus one of its members cannot have separate writers.
@@ -1084,10 +1084,17 @@ finalizeConnections()</programlisting>
       </section>
       <section>
         <title>Observation and Scripts</title>
-        <para>Input status() and output snapshot() service operations are
-        non-consuming observers. Reporting and network observers use synchronized
-        committed snapshots. Network ingress stages data until the destination's
-        next input boundary. Port services provide no manual transfer operations.</para>
+        <para>Port expressions are read-only, non-consuming observations. Ports do
+        not generate services or methods: source.output.connected is an ordinary
+        data field if the type defines it. Use the deployer's isPortConnected and
+        disconnectPort operations for management. Reporting and network readers
+        use synchronized observations of acquired input and committed output.
+        Before the first output commit, and while a remote sample is unavailable,
+        observation evaluation reports unavailable. Arithmetic and operation
+        arguments fail explicitly rather than using a default or stale value.
+        External input writers must be enabled while stopped; they own a whole
+        or fixed member region and stage samples until the next input boundary.
+        Publication alone never creates a connection.</para>
         <para>Discrete commands belong in operations; state machines can observe
         component attributes or observation operations. Legacy port-event transition
         syntax is removed. Lua component code may access the owning port's data()

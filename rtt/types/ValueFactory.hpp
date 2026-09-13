@@ -48,6 +48,7 @@
 
 namespace RTT
 {
+    namespace internal { class ObservationPath; }
     namespace types {
 
         /**
@@ -109,6 +110,8 @@ namespace RTT
          * a plain DataSource is returned.
          */
         virtual base::DataSourceBase::shared_ptr buildActionAlias(base::ActionInterface* action, base::DataSourceBase::shared_ptr source) const = 0;
+        virtual base::DataSourceBase::shared_ptr buildReadOnlyExpression(
+            boost::shared_ptr<internal::ObservationPath>, bool) const { return {}; }
         /** @} */
 
         };

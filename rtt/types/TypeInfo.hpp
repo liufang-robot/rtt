@@ -240,6 +240,11 @@ namespace RTT
             return mdsf ? mdsf->buildReference(ptr) : base::DataSourceBase::shared_ptr();
         }
 
+        /** Build a typed read-only observation expression or frozen sample. */
+        base::DataSourceBase::shared_ptr buildReadOnlyExpression(boost::shared_ptr<internal::ObservationPath> path, bool live) const {
+            return mdsf ? mdsf->buildReadOnlyExpression(path, live) : base::DataSourceBase::shared_ptr();
+        }
+
         /**
          * Returns a DataSource that first executes an action and returns the result of another data source.
          * If \a source is an AssignableDataSource, an AssignableDataSource is returned of the same type, otherwise,

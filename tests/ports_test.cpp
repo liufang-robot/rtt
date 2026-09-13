@@ -477,7 +477,7 @@ BOOST_AUTO_TEST_CASE(testInvalidSharedConnection)
     BOOST_CHECK( !wp2.createConnection(rp1) );          // different connection => failure
 }
 
-BOOST_AUTO_TEST_CASE( testPortObjects)
+BOOST_AUTO_TEST_CASE( testRegisteredPortObservation)
 {
     OutputPort<double> wp1("Write");
     InputPort<double>  rp1("Read");
@@ -485,9 +485,8 @@ BOOST_AUTO_TEST_CASE( testPortObjects)
     tc->ports()->addPort( wp1 );
     tc->ports()->addPort( rp1 );
 
-    // Check if ports were added as objects as well
-    BOOST_CHECK( tc->provides("Write") != 0 );
-    BOOST_CHECK( tc->provides("Read") != 0 );
+    BOOST_CHECK(!tc->provides()->hasService("Write"));
+    BOOST_CHECK(!tc->provides()->hasService("Read"));
 
     // Set initial value
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(wp1,  1.0 ), NotConnected );
@@ -495,23 +494,16 @@ BOOST_AUTO_TEST_CASE( testPortObjects)
     // Connect ports.
     wp1.createConnection( rp1 );
 
-    // Port services expose non-consuming observation only.
-    BOOST_CHECK(!tc->provides("Write")->hasOperation("write"));
-    BOOST_CHECK(!tc->provides("Read")->hasOperation("read"));
-    OperationCaller<double()> snapshot = tc->provides("Write")->getOperation("snapshot");
-    OperationCaller<FlowStatus()> status = tc->provides("Read")->getOperation("status");
-    BOOST_REQUIRE(snapshot.ready());
-    BOOST_REQUIRE(status.ready());
     wp1.data() = 3.991;
-    BOOST_CHECK_CLOSE(snapshot(), 1.0, 0.001);
+    BOOST_CHECK_CLOSE(wp1.snapshot(), 1.0, 0.001);
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::commit(wp1), WriteSuccess);
-    BOOST_CHECK_CLOSE(snapshot(), 3.991, 0.001);
-    BOOST_CHECK_EQUAL(status(), NoData);
+    BOOST_CHECK_CLOSE(wp1.snapshot(), 3.991, 0.001);
+    BOOST_CHECK_EQUAL(rp1.status(), NoData);
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::refresh(rp1), NewData);
-    BOOST_CHECK_EQUAL(status(), NewData);
+    BOOST_CHECK_EQUAL(rp1.status(), NewData);
     BOOST_CHECK_CLOSE(rp1.data(), 3.991, 0.001);
 
-    //// Finally, check cleanup. Ports and port objects must be gone:
+    //// Finally, check cleanup. Ports must be gone:
     tc->ports()->removePort("Read");
     BOOST_CHECK( tc->provides()->hasService("Read") == 0 );
     BOOST_CHECK( tc->ports()->getPort("Read") == 0 );

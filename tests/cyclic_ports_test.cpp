@@ -133,20 +133,16 @@ BOOST_AUTO_TEST_CASE(component_port_images_change_only_at_runtime_boundaries)
     checkImageBoundary<InputPort<double>, OutputPort<double>>();
 }
 
-BOOST_AUTO_TEST_CASE(script_port_services_do_not_expose_manual_transfers)
+BOOST_AUTO_TEST_CASE(registered_ports_do_not_create_script_services)
 {
     InputPort<double> input("input");
     OutputPort<double> output("output");
     TaskContext owner("script_owner");
     owner.addPort(input);
     owner.addPort(output);
-    auto input_service = owner.provides()->getService("input");
-    auto output_service = owner.provides()->getService("output");
-    BOOST_REQUIRE(input_service);
-    BOOST_REQUIRE(output_service);
-    BOOST_CHECK(!input_service->hasOperation("read"));
-    BOOST_CHECK(!input_service->hasOperation("clear"));
-    BOOST_CHECK(!output_service->hasOperation("write"));
+    BOOST_CHECK(!owner.provides()->hasService("input"));
+    BOOST_CHECK(!owner.provides()->hasService("output"));
+
 }
 
 BOOST_AUTO_TEST_CASE(snapshot_observers_are_independent_and_survive_port_destruction)

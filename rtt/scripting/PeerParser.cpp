@@ -175,6 +175,10 @@ namespace RTT
         std::string name( begin, end );
         name.erase( name.length() -1  ); // compensate for extra "."
 
+        if (stop_at_port && mcurobject->getPort(name)) {
+            mlastobject = name;
+            throw_(begin, peer_not_found);
+        }
         if ( mcurobject == _peer->provides() && _peer->hasPeer( name ) ) {
             _peer = _peer->getPeer( name );
             if ( _peer->ready() == false ) {

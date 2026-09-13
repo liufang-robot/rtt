@@ -58,33 +58,7 @@ namespace RTT
     }
 
     PortInterface& DataFlowInterface::addPort(PortInterface& port) {
-        if ((getOwner() && getOwner()->base::TaskCore::isRunning()) || !port.prepareConnectionChange())
-            throw std::runtime_error("Cannot change ports of a running component");
-        if (getOwner()) getOwner()->invalidateConnections();
-        if ( !chkPtr("addPort", "PortInterface", &port) ) return port;
-        this->addLocalPort(port);
-        Service::shared_ptr mservice_ref;
-        if (mservice && mservice->hasService( port.getName()) ) {
-            // Since there is at least one child service, mservice is ref counted. The danger here is that mservice is destructed during removeService()
-            // for this reason, we take a ref to mservice until we leave addPort.
-            mservice_ref = mservice->provides(); // uses shared_from_this()
-            Logger::log().logf(Logger::Warning, "DataFlowInterface",
-                               "'addPort' %s: name already in use as Service. Replacing previous service with new one.",
-                               port.getName().c_str());
-            mservice->removeService(port.getName());
-        }
-
-        if (!mservice) {
-            Logger::log().logf(Logger::Warning, "DataFlowInterface",
-                               "'addPort' %s: DataFlowInterface not given to parent. Not adding Service.",
-                               port.getName().c_str());
-            return port;
-        }
-        Service::shared_ptr ms( this->createPortObject( port.getName()) );
-        if ( ms )
-            mservice->addService( ms );
-        // END NOTE.
-        return port;
+        return addLocalPort(port);
     }
 
     PortInterface& DataFlowInterface::addLocalPort(PortInterface& port) {
@@ -108,27 +82,7 @@ namespace RTT
     }
 
     void DataFlowInterface::removePort(const std::string& name) {
-        if (getOwner() && getOwner()->base::TaskCore::isRunning())
-            throw std::runtime_error("Cannot remove a port of a running component");
-        if (getOwner()) getOwner()->invalidateConnections();
-        for ( Ports::iterator it(mports.begin());
-              it != mports.end();
-              ++it)
-            if ( (*it)->getName() == name ) {
-                if (!(*it)->connectionChangeAllowed())
-                    throw std::runtime_error("Cannot remove a port while a connected component is running");
-                (*it)->disconnect(); // remove all connections.
-                Service::shared_ptr mservice_ref;
-                if (mservice && mservice->hasService(name) ) {
-                    // Since there is at least one child service, mservice is ref counted. The danger here is that mservice is destructed during removeService()
-                    // for this reason, we take a ref to mservice until we leave removePort.
-                    mservice_ref = mservice->provides(); // uses shared_from_this()
-                    mservice->removeService( name );
-                }
-                (*it)->setInterface(0);
-                mports.erase(it);
-                return;
-            }
+        removeLocalPort(name);
     }
 
     void DataFlowInterface::removeLocalPort(const std::string& name) {
@@ -180,27 +134,10 @@ namespace RTT
     }
 
     bool DataFlowInterface::setPortDescription(const std::string& name, const std::string description) {
-        Service::shared_ptr srv = mservice->getService(name);
-        if (srv) {
-            srv->doc(description);
-            return true;
-        }
-        return false;
-    }
-
-    Service* DataFlowInterface::createPortObject(const std::string& name) {
-        PortInterface* p = this->getPort(name);
-        if ( !p )
-            return 0;
-        Service* to = p->createPortObject();
-        if (to) {
-            std::string d = this->getPortDescription(name);
-            if ( !d.empty() )
-                to->doc( d );
-            else
-                to->doc("No description set for this Port. Use .doc() to document it.");
-        }
-        return to;
+        auto* port = getPort(name);
+        if (!port) return false;
+        port->doc(description);
+        return true;
     }
 
     void DataFlowInterface::clear()

@@ -89,8 +89,6 @@ void PortInterface::updateFullName() {
 
 PortInterface& PortInterface::doc(const std::string& desc) {
     mdesc = desc;
-    if (iface)
-        iface->setPortDescription(name, desc);
     return *this;
 }
 
@@ -109,20 +107,11 @@ int PortInterface::serverProtocol() const
 ConnID* PortInterface::getPortID() const
 { return new LocalConnID(this); }
 
-Service* PortInterface::createPortObject()
-{
-#ifndef ORO_EMBEDDED
-    Service* to = new Service( this->getName(), iface->getOwner() );
-    to->addSynchronousOperation( "name",&PortInterface::getName, this).doc(
-            "Returns the port name.");
-    to->addSynchronousOperation("connected", &PortInterface::connected, this).doc("Check if this port is connected and ready for use.");
-
-    typedef void (PortInterface::*disconnect_all)();
-    to->addSynchronousOperation("disconnect", static_cast<disconnect_all>(&PortInterface::disconnect), this).doc("Disconnects this port from any connection it is part of.");
-    return to;
-#else
-    return 0;
-#endif
+base::DataSourceBase::shared_ptr PortInterface::getObservationDataSource() const {
+    if (observation_source) return observation_source->clone();
+    if (const auto* output = dynamic_cast<const OutputPortInterface*>(this)) return output->getDataSource();
+    if (auto* input = dynamic_cast<InputPortInterface*>(const_cast<PortInterface*>(this))) return input->getDataSource();
+    return {};
 }
 
 bool PortInterface::removeConnection(ConnID* conn)

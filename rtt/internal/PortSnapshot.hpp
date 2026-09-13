@@ -3,6 +3,7 @@
 
 #include "../base/DataObject.hpp"
 #include "DataSource.hpp"
+#include "ObservationPath.hpp"
 #include <atomic>
 #include <cstdint>
 #include <utility>
@@ -66,7 +67,7 @@ public:
 };
 
 template<class T>
-class PortSnapshotSource : public DataSource<T> {
+class PortSnapshotSource : public DataSource<T>, public ObservationStatus {
     boost::shared_ptr<PortSnapshot<T>> snapshot_;
     bool include_default_;
     mutable T value_{};
@@ -76,6 +77,7 @@ public:
         : snapshot_(std::move(snapshot)), include_default_(include_default) {
         snapshot_->copy(value_, include_default_);
     }
+    bool available() const override { return include_default_ || snapshot_->available.load(std::memory_order_acquire); }
     bool evaluate() const override {
         // Capture the revision before copying: a concurrent publication may
         // be observed twice, but is never skipped by advancing past its sample.

@@ -216,6 +216,21 @@ struct CyclicDataFlow::Impl {
     }
 };
 
+base::DataSourceBase::shared_ptr CyclicDataFlow::selectMember(Sample sample, const std::string& text, std::string* canonical) {
+    Path path;
+    if (!parse(text, path)) return {};
+    Sample selected = select(sample, path);
+    if (selected && canonical) *canonical = pathText(path);
+    return selected;
+}
+bool CyclicDataFlow::copySample(Sample source, Sample destination) {
+    if (!compatible(source, destination)) return false;
+    std::vector<Assignment> assignments;
+    if (!bind(source, destination, assignments)) return false;
+    for (const auto& action : assignments) { action->readArguments(); if (!action->execute()) return false; }
+    return true;
+}
+
 bool CyclicDataFlow::validateWhole(base::OutputPortInterface& source, base::InputPortInterface& destination) {
     try {
         Sample from = PortDataAccess::image(source), to = PortDataAccess::image(destination);
