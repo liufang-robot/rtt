@@ -31,19 +31,6 @@ public:
     }
 };
 
-class TestEventService : public Service {
-public:
-    InputPort<int> ip;
-    InputPort<int> ip2;
-    OutputPort<int> op;
-    TestEventService(TaskContext* owner = 0) : Service("portservice", owner)
-    {
-        addEventPort("ip",ip).doc("ip");
-        addEventPort("ip",ip2).doc("ip"); // overrides ip
-        addPort("op",op).doc("op");
-    }
-};
-
 BOOST_AUTO_TEST_CASE(testAddPort)
 {
     TestService* ts = new TestService();
@@ -62,35 +49,6 @@ BOOST_AUTO_TEST_CASE(testAddPortWithOwner)
 {
     TaskContext tc("tc");
     TestService* ts = new TestService( &tc );
-    Service::shared_ptr s( ts );
-
-    tc.provides()->addService( s );
-
-    // check that last port is the real thing:
-    BOOST_CHECK( tc.provides("portservice")->getPort("ip") == &ts->ip2 );
-
-    BOOST_CHECK( tc.provides("portservice")->getPort("op") == &ts->op );
-}
-
-
-BOOST_AUTO_TEST_CASE(testAddEventPort)
-{
-    TestEventService* ts = new TestEventService();
-    Service::shared_ptr s( ts );
-    TaskContext tc("tc");
-
-    tc.provides()->addService( s );
-
-    // check that last port is the real thing:
-    BOOST_CHECK( tc.provides("portservice")->getPort("ip") == &ts->ip2 );
-
-    BOOST_CHECK( tc.provides("portservice")->getPort("op") == &ts->op );
-}
-
-BOOST_AUTO_TEST_CASE(testAddEventPortWithOwner)
-{
-    TaskContext tc("tc");
-    TestEventService* ts = new TestEventService(&tc);
     Service::shared_ptr s( ts );
 
     tc.provides()->addService( s );

@@ -1,3 +1,4 @@
+#include "transport_test.hpp"
 #include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
@@ -58,8 +59,6 @@ public:
     CTaskContext_ptr s;
     CTaskContext_ptr s2;
 
-    base::PortInterface* signalled_port;
-    void new_data_listener(base::PortInterface* port);
 
     // Ports
     InputPort<double>*  mi;
@@ -122,7 +121,7 @@ CorbaTest::setUp()
     mo = new OutputPort<double>("mo");
 
     tc =  new TaskContext( "root" );
-    tc->ports()->addEventPort( *mi,boost::bind(&CorbaTest::new_data_listener, this, _1) );
+    tc->ports()->addPort( *mi);
     tc->ports()->addPort( *mo );
 
     t2 = 0;
@@ -150,20 +149,9 @@ CorbaTest::tearDown()
     delete mo;
 }
 
-void CorbaTest::new_data_listener(base::PortInterface* port)
-{
-    signalled_port = port;
-}
 
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) do { \
-    signalled_port = 0; \
-    int wait = 0; \
-    code; \
-    while (read_port != signalled_port && wait++ != 5) \
-        usleep(100000); \
-    BOOST_CHECK( read_port == signalled_port ); \
-} while(0)
+
 
 #define wait_for( cond, times ) do { \
     bool wait_for_helper; \
@@ -193,12 +181,12 @@ void CorbaTest::testPortDataConnection()
     // Check if no-data works
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 1.0), mi);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
+    // Check transport delivery after publication
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 1.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 1.0, tp), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 2.0), mi);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mi, value) );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 2.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 2.0, tp), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
@@ -215,11 +203,11 @@ void CorbaTest::testPortLatestConnection()
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 1.0), mi);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 2.0), mi);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 3.0), mi);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mo, 4.0), mi);
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NewData );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 1.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 2.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 3.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 4.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 4.0, tp), NewData);
     BOOST_CHECK_EQUAL( 4.0, value );
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), OldData );
 }
@@ -438,8 +426,6 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     BOOST_CHECK_THROW( ports->createConnection("mi", ports2, "mi", policy), CNoSuchPortException );
     BOOST_CHECK_THROW( ports->createConnection("mi", ports2, "mo", policy), CNoSuchPortException );
 
-    // must be running to catch event port signalling.
-    BOOST_CHECK( tc->start() );
     // WARNING: in the following, there is four configuration tested. There is
     // also three different ways to disconnect. We need to test those three
     // "disconnection methods", so beware when you change something ...
@@ -594,7 +580,7 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
 
     // Check read of new data
     RTT::internal::PortDataAccess::publish(*mo,  3.33 );
-    wait_for_equal( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true), CNewData, 5 );
+    wait_for_equal( (stepTransportPeer(*tp), RTT::internal::PortDataAccess::receive(*cce, sample.out(), true)), CNewData, 5 );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
@@ -619,7 +605,7 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     result = 0.0;
     sample <<= 4.44;
     RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
-    wait_for_equal( RTT::internal::PortDataAccess::receive(*mi,  result ), NewData, 5 );
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, result, 4.44, tp), NewData);
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.

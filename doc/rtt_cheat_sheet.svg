@@ -944,7 +944,7 @@
              y="725.82983"
              x="261.58096"
              sodipodi:role="line"
-             id="tspan5959">addEventPort(&quot;name&quot;,name).doc(&quot;...&quot;);</tspan><tspan
+             id="tspan5959">// Activity or external scheduler drives cycles.</tspan><tspan
              id="tspan7359"
              style="font-size:10.3039999px;font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;text-align:start;line-height:94.99999881%;writing-mode:lr-tb;text-anchor:start;fill:#0737e3;fill-opacity:1;font-family:ProggyTinyTT"
              y="735.61865"

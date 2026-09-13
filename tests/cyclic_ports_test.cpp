@@ -2,6 +2,7 @@
 #include <rtt/InputPort.hpp>
 #include <rtt/OutputPort.hpp>
 #include <rtt/TaskContext.hpp>
+#include <rtt/ExecutionEngine.hpp>
 #include <rtt/extras/SlaveActivity.hpp>
 #include <memory>
 #include <type_traits>
@@ -25,6 +26,66 @@ concept ConsumingPort = requires(P& port, double& sample) { port.read(sample); }
 
 template<class P>
 concept PublishingPort = requires(P& port, double sample) { port.write(sample); };
+
+template<class Interface>
+concept EventPortRegistration = requires(Interface& interface, InputPort<double>& port) {
+    interface.addEventPort(port);
+};
+
+template<class Interface>
+concept LocalEventPortRegistration = requires(Interface& interface, InputPort<double>& port) {
+    interface.addLocalEventPort(port);
+};
+
+template<class Engine>
+concept PortCallbackQueue = requires(Engine& engine, base::PortInterface* port) {
+    engine.process(port);
+};
+
+BOOST_AUTO_TEST_CASE(component_scheduling_has_no_data_port_event_api)
+{
+    BOOST_CHECK(!EventPortRegistration<TaskContext>);
+    BOOST_CHECK(!EventPortRegistration<DataFlowInterface>);
+    BOOST_CHECK(!EventPortRegistration<Service>);
+    BOOST_CHECK(!LocalEventPortRegistration<DataFlowInterface>);
+    BOOST_CHECK(!PortCallbackQueue<ExecutionEngine>);
+}
+
+BOOST_AUTO_TEST_CASE(nested_service_publication_waits_for_an_explicit_nonperiodic_cycle)
+{
+    class Consumer : public TaskContext {
+    public:
+        InputPort<double> input{"input"};
+        OutputPort<double> output{"output"};
+        unsigned updates = 0;
+        Consumer() : TaskContext("consumer") {
+            setActivity(new extras::SlaveActivity());
+            auto service = provides("motion")->provides("axis");
+            service->addPort(input);
+            service->addPort(output);
+        }
+        void updateHook() override { ++updates; output.data() = input.data() + 1; }
+    } consumer;
+    OutputPort<double> source("source");
+    InputPort<double> observer("observer");
+    BOOST_REQUIRE(source.connectTo(&consumer.input));
+    BOOST_REQUIRE(consumer.output.connectTo(&observer));
+    BOOST_REQUIRE(consumer.start());
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(source, 41.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(consumer.updates, 0u);
+    BOOST_CHECK_EQUAL(consumer.input.data(), 0.0);
+    BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(observer), NoData);
+    BOOST_REQUIRE(consumer.getActivity()->execute());
+    BOOST_CHECK_EQUAL(consumer.updates, 1u);
+    BOOST_CHECK_EQUAL(consumer.input.data(), 41.0);
+    BOOST_CHECK_EQUAL(consumer.input.status(), NewData);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::refresh(observer), NewData);
+    BOOST_CHECK_EQUAL(observer.data(), 42.0);
+    BOOST_REQUIRE(consumer.getActivity()->execute());
+    BOOST_CHECK_EQUAL(consumer.updates, 2u);
+    BOOST_CHECK_EQUAL(consumer.input.status(), OldData);
+    BOOST_REQUIRE(consumer.stop());
+}
 
 template<class Input, class Output>
 void checkImageBoundary()

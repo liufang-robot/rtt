@@ -1,4 +1,4 @@
-#include <rtt/internal/PortDataAccess.hpp>
+#include <rtt/extras/SequentialActivity.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  corba_mqueue_ipc_server.cpp
 
@@ -42,23 +42,28 @@ public:
     OutputPort<double> mo1;
 
     TheServer(string name) : TaskContext(name), mi1("mr"), mo1("mw") {
-        ports()->addEventPort( mi1 );
+        setActivity(new extras::SequentialActivity());
+        mTriggerOnStart = false;
+        addOperation("stepPorts", &TheServer::stepPorts, this, ClientThread);
+        ports()->addPort( mi1 );
         ports()->addPort( mo1 );
-        this->start();
         ts = corba::TaskContextServer::Create( this, /* use_naming = */ true );
     }
     ~TheServer() {
         this->stop();
     }
 
-    void updateHook(){
-        Logger::log().logf(Logger::Info, "CorbaMQueueIpcServer",
-                           "Received data on port");
-        double d = 123456.789;
-        FlowStatus fs = NoData;
-        while( (fs = RTT::internal::PortDataAccess::receive(mi1, d, false)) == NewData ) {
-            RTT::internal::PortDataAccess::publish(mo1, d);
-        }
+    // The client schedules one real component cycle, then leaves the server
+    // stopped so subsequent connection setup and disconnects remain legal.
+    bool stepPorts() {
+        if (!start()) return false;
+        const bool executed = trigger();
+        const bool stopped = stop();
+        return executed && stopped;
+    }
+
+    void updateHook() override {
+        if (mi1.status() != NoData) mo1.data() = mi1.data();
     }
 
     corba::TaskContextServer* ts;

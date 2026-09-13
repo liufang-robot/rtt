@@ -1,3 +1,4 @@
+#include "transport_test.hpp"
 #include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  corba_mqueue_test.cpp
@@ -42,11 +43,11 @@ CorbaMQueueTest::setUp()
     mw2 = new OutputPort<double>("mw");
 
     tc =  new TaskContext( "localroot" );
-    tc->ports()->addEventPort( *mr1, boost::bind(&CorbaMQueueTest::new_data_listener, this, _1) );
+    tc->ports()->addPort( *mr1);
     tc->ports()->addPort( *mw1 );
 
     t2 = new TaskContext("localother");
-    t2->ports()->addEventPort( *mr2,boost::bind(&CorbaMQueueTest::new_data_listener, this, _1) );
+    t2->ports()->addPort( *mr2);
     t2->ports()->addPort( *mw2 );
 
     ts2 = ts = 0;
@@ -70,18 +71,9 @@ CorbaMQueueTest::tearDown()
     delete mw2;
 }
 
-void CorbaMQueueTest::new_data_listener(base::PortInterface* port)
-{
-    signalled_port = port;
-}
 
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) do { \
-    signalled_port = 0; \
-    code; \
-    usleep(100000); \
-    BOOST_CHECK( read_port == signalled_port ); \
-} while(0)
+
 
 void CorbaMQueueTest::testPortDataConnection()
 {
@@ -95,12 +87,12 @@ void CorbaMQueueTest::testPortDataConnection()
     // Check if no-data works
     BOOST_CHECK( !RTT::internal::PortDataAccess::receive(*mr2, value) );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    // Check transport delivery after publication
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mw1, 1.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 1.0), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mw1, 2.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 2.0), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
@@ -117,10 +109,10 @@ void CorbaMQueueTest::testPortLatestConnection()
     BOOST_CHECK( !RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mw1, 1.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mw1, 2.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mw1, 3.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 3.0), NewData);
     BOOST_CHECK_EQUAL( 3.0, value );
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), OldData );
 }
@@ -153,8 +145,6 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     corba::CDataFlowInterface_var ports  = ts->server()->ports();
     corba::CDataFlowInterface_var ports2 = ts2->server()->ports();
 
-    // must be running to catch event port signalling.
-    BOOST_CHECK( t2->start() );
     // WARNING: in the following, there is four configuration tested. There is
     // also three different ways to disconnect. We need to test those three
     // "disconnection methods", so beware when you change something ...

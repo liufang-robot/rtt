@@ -1022,8 +1022,12 @@ public:
         are not withheld while waiting for a first publication.</para>
         <para>Register service ports using service->addPort(port), and attach the
         service to the component's provides() tree. All depths participate in the
-        same component boundary. An EventPort may wake a component for incoming
-        state; it does not promise one hook invocation per source publication.</para>
+        same component boundary. Ports never schedule their owner when state arrives.
+        Select a periodic activity or explicitly execute cycles from an external
+        scheduler. Nonperiodic externally scheduled activities remain supported.
+        Event-port registration, dataOnPort hooks and callbacks are removed; use
+        addPort() and process the input image in updateHook(). Explicit trigger()
+        and operation scheduling retain their activity-defined behavior.</para>
       </section>
       <section>
         <title>Whole Values and Member Connections</title>
@@ -1036,14 +1040,14 @@ public:
 connectPort("Source.motion.output", "Sink.motion.input")
 
 // Alternative wiring: Input.x and Input.y have different source ports.
-connectMember("SourceA.output", "x", "Sink.input", "x")
-connectMember("SourceB.output", "y", "Sink.input", "y")
+connectPort("SourceA.output::x", "Sink.input::x")
+connectPort("SourceB.output::y", "Sink.input::y")
 finalizeConnections()</programlisting>
-        <para>An empty member path selects the whole value. For example,
-        connectMember("Source.scalar", "", "Sink.input", "y") connects a scalar
-        output to a member, and reversing the empty selector supports member-to-whole.
-        Nested selectors use syntax such as axes[2].position. The service/port path
-        and the data-member selector are separate arguments.</para>
+        <para>Omitting the ::selector selects the whole value. For example,
+        connectPort("Source.scalar", "Sink.input::y") connects a scalar
+        output to a member, and omitting the destination selector supports member-to-whole.
+        Nested selectors use syntax such as axes[2].position. The :: delimiter
+        separates the service/port path from the optional data-member selector.</para>
         <para>Each destination region has one writer. Sources may fill disjoint
         members of one input, but overlapping members, a parent and its child, or
         a whole input plus one of its members cannot have separate writers.

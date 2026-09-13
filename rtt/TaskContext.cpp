@@ -459,9 +459,6 @@ namespace RTT
     {
         if ( this->isRunning() || !finalizeConnections() )
             return false;
-#ifdef ORO_SIGNALLING_PORTS
-        ports()->setupHandles();
-#endif
         return TaskCore::start(); // calls startHook()
     }
 
@@ -470,42 +467,10 @@ namespace RTT
         if ( !this->isRunning() )
             return false;
         if (TaskCore::stop()) { // calls stopHook()
-#ifdef ORO_SIGNALLING_PORTS
-            ports()->cleanupHandles();
-#endif
             return true;
         }
         return false;
     }
 
-    void TaskContext::dataOnPort(PortInterface* port)
-    {
-        if ( this->dataOnPortHook(port) ) {
-            this->engine()->process(port);
-        }
-    }
 
-    bool TaskContext::dataOnPortHook(PortInterface*) {
-        return this->isRunning();
-    }
-
-    void TaskContext::dataOnPortCallback(PortInterface* port) {
-        UserCallbacks::iterator it = user_callbacks.find(port);
-        if (it != user_callbacks.end() )
-            it->second(port); // fire the user callback
-    }
-
-    void TaskContext::setDataOnPortCallback(InputPortInterface* port, TaskContext::SlotFunction callback) {
-        // user_callbacks will only be emitted from updateHook().
-        MutexLock lock(mportlock);
-        user_callbacks[port] = callback;
-    }
-
-    void TaskContext::removeDataOnPortCallback(PortInterface* port) {
-        MutexLock lock(mportlock);
-        UserCallbacks::iterator it = user_callbacks.find(port);
-        if (it != user_callbacks.end() ) {
-            user_callbacks.erase(it);
-        }
-    }
 }

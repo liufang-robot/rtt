@@ -1375,7 +1375,7 @@
     // other events likewise...
   }</programlisting>
 	  <para>
-			As with Event ports, both the transition programs and the the select statements
+			Both the transition programs and the select statements
 			are optional, but at least a program or select statement
 			must be given.
 	  </para>

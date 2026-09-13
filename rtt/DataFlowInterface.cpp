@@ -107,87 +107,6 @@ namespace RTT
         return port;
     }
 
-    InputPortInterface& DataFlowInterface::addEventPort(InputPortInterface& port, SlotFunction callback) {
-        if ((getOwner() && getOwner()->base::TaskCore::isRunning()) || !port.prepareConnectionChange())
-            throw std::runtime_error("Cannot change ports of a running component");
-        if (getOwner()) getOwner()->invalidateConnections();
-        if ( !chkPtr("addEventPort", "PortInterface", &port) ) return port;
-        this->addLocalEventPort(port, callback);
-        Service::shared_ptr mservice_ref;
-        if (mservice && mservice->hasService( port.getName()) ) {
-            // Since there is at least one child service, mservice is ref counted. The danger here is that mservice is destructed during removeService()
-            // for this reason, we take a ref to mservice until we leave addPort.
-            mservice_ref = mservice->provides(); // uses shared_from_this()
-            Logger::log().logf(Logger::Warning, "DataFlowInterface",
-                               "'addPort' %s: name already in use as Service. Replacing previous service with new one.",
-                               port.getName().c_str());
-            mservice->removeService(port.getName());
-        }
-
-        if (!mservice) {
-            Logger::log().logf(Logger::Warning, "DataFlowInterface",
-                               "'addPort' %s: DataFlowInterface not given to parent. Not adding Service.",
-                               port.getName().c_str());
-            return port;
-        }
-        Service::shared_ptr ms( this->createPortObject( port.getName()) );
-        if ( ms )
-            mservice->addService( ms );
-        return port;
-    }
-
-#ifdef ORO_SIGNALLING_PORTS
-    void DataFlowInterface::setupHandles() {
-        for_each(handles.begin(), handles.end(), boost::bind(&Handle::connect, _1));
-    }
-
-    void DataFlowInterface::cleanupHandles() {
-        for_each(handles.begin(), handles.end(), boost::bind(&Handle::disconnect, _1));
-    }
-#else
-    void DataFlowInterface::dataOnPort(base::PortInterface* port)
-    {
-        if ( mservice && mservice->getOwner() )
-            mservice->getOwner()->dataOnPort(port);
-    }
-#endif
-
-    InputPortInterface& DataFlowInterface::addLocalEventPort(InputPortInterface& port, SlotFunction callback) {
-        this->addLocalPort(port);
-
-        if (mservice == 0 || mservice->getOwner() == 0) {
-            Logger::log().logf(Logger::Error, "DataFlowInterface",
-                               "addLocalEventPort %s: DataFlowInterface not part of a TaskContext. Will not trigger any TaskContext nor register callback.",
-                               port.getName().c_str());
-            return port;
-        }
-
-#ifdef ORO_SIGNALLING_PORTS
-        // setup synchronous callback, only purpose is to register that port fired and trigger the TC's engine.
-        Handle h = port.getNewDataOnPortEvent()->connect(boost::bind(&TaskContext::dataOnPort, mservice->getOwner(), _1) );
-        if (h) {
-            Logger::log().logf(Logger::Info, "DataFlowInterface",
-                               "%s will be triggered when new data is available on InputPort %s",
-                               mservice->getName().c_str(), port.getName().c_str());
-            handles.push_back(h);
-        } else {
-            Logger::log().logf(Logger::Error, "DataFlowInterface",
-                               "%s can't connect to event of InputPort %s",
-                               mservice->getName().c_str(), port.getName().c_str());
-            return port;
-        }
-#endif
-        if (callback)
-            mservice->getOwner()->setDataOnPortCallback(&port,callback); // the handle will be deleted when the port is removed.
-        else
-            mservice->getOwner()->setDataOnPortCallback(&port,boost::bind(&TaskCore::trigger, mservice->getOwner()) ); // default schedules an updateHook()
-
-#ifndef ORO_SIGNALLING_PORTS
-        port.signalInterface(true);
-#endif
-        return port;
-    }
-
     void DataFlowInterface::removePort(const std::string& name) {
         if (getOwner() && getOwner()->base::TaskCore::isRunning())
             throw std::runtime_error("Cannot remove a port of a running component");
@@ -198,15 +117,13 @@ namespace RTT
             if ( (*it)->getName() == name ) {
                 if (!(*it)->connectionChangeAllowed())
                     throw std::runtime_error("Cannot remove a port while a connected component is running");
-                (*it)->disconnect(); // remove all connections and callbacks.
+                (*it)->disconnect(); // remove all connections.
                 Service::shared_ptr mservice_ref;
                 if (mservice && mservice->hasService(name) ) {
                     // Since there is at least one child service, mservice is ref counted. The danger here is that mservice is destructed during removeService()
                     // for this reason, we take a ref to mservice until we leave removePort.
                     mservice_ref = mservice->provides(); // uses shared_from_this()
                     mservice->removeService( name );
-                    if (mservice->getOwner())
-                        mservice->getOwner()->removeDataOnPortCallback( *it );
                 }
                 (*it)->setInterface(0);
                 mports.erase(it);
@@ -224,7 +141,7 @@ namespace RTT
             if ( (*it)->getName() == name ) {
                 if (!(*it)->connectionChangeAllowed())
                     throw std::runtime_error("Cannot remove a port while a connected component is running");
-                (*it)->disconnect(); // remove all connections and callbacks.
+                (*it)->disconnect(); // remove all connections.
                 (*it)->setInterface(0);
                 mports.erase(it);
                 return;

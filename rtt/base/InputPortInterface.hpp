@@ -46,9 +46,6 @@
 #include "ChannelElement.hpp"
 #include "../internal/rtt-internal-fwd.hpp"
 #include "../internal/ConnectionManager.hpp"
-#ifdef ORO_SIGNALLING_PORTS
-#include "../internal/Signal.hpp"
-#endif
 #include "../base/DataSourceBase.hpp"
 
 namespace RTT { namespace internal { class PortDataAccess; } }
@@ -63,11 +60,6 @@ namespace RTT
      */
     class RTT_API InputPortInterface : public PortInterface
     {
-#ifdef ORO_SIGNALLING_PORTS
-    public:
-        typedef internal::Signal<void(PortInterface*)> NewDataOnPortEvent;
-        typedef NewDataOnPortEvent::SlotFunction SlotFunction;
-#endif
 
     private:
         friend class internal::PortDataAccess;
@@ -78,15 +70,6 @@ namespace RTT
     protected:
         std::atomic<FlowStatus> image_status_{NoData};
         ConnPolicy        default_policy;
-#ifdef ORO_SIGNALLING_PORTS
-        NewDataOnPortEvent* new_data_on_port_event;
-#else
-        bool msignal_interface;
-        /**
-         * The ConnOutputEndpoint signals that new data is available
-         */
-        void signal();
-#endif
 
         void traceRead(RTT::FlowStatus status);
         InputPortInterface(const InputPortInterface& orig);
@@ -136,13 +119,11 @@ namespace RTT
         /** Freshness of the image prepared for this cycle; no channel access. */
         FlowStatus status() const noexcept { return image_status_.load(std::memory_order_acquire); }
 
-        /** Removes any connection that either go to or come from this port
-         *  *and* removes all callbacks and cleans up the NewDataOnPortEvent.
-         */
+        /** Removes all connections to this port. */
         virtual void disconnect();
 
         /** Removes the channel that connects this port to \c port.
-         *  All other ports or callbacks remain unaffected.
+         *  All other ports remain unaffected.
          */
         virtual bool disconnect(PortInterface* port);
 
@@ -150,17 +131,6 @@ namespace RTT
         /** Returns true if this port is connected */
         virtual bool connected() const;
 
-#ifdef ORO_SIGNALLING_PORTS
-        /** Returns the event object that gets emitted when new data is
-         * available for this port. It gets deleted when the port is deleted.
-         */
-        NewDataOnPortEvent* getNewDataOnPortEvent();
-#else
-        /** When called with \b true, will signal the DataFlowInterface when
-         * new data is available.
-         */
-        void signalInterface(bool true_false);
-#endif
 
         virtual bool connectTo(PortInterface* other, ConnPolicy const& policy);
 

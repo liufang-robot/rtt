@@ -44,8 +44,6 @@ public:
     TaskContext* tp2;
     corba::TaskContextServer* ts2;
 
-    base::PortInterface* signalled_port;
-    void new_data_listener(base::PortInterface* port);
 
     // Ports
     InputPort<double>*  mr1;

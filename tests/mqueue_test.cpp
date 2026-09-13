@@ -1,3 +1,4 @@
+#include "transport_test.hpp"
 #include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  mqueue_test.cpp
@@ -34,20 +35,12 @@ using namespace RTT::detail;
 #include <InputPort.hpp>
 #include <OutputPort.hpp>
 #include <TaskContext.hpp>
+#include <rtt/extras/SequentialActivity.hpp>
 #include <rtt/types/TypeTransporter.hpp>
 #include <string>
 
 using namespace RTT;
 using namespace RTT::detail;
-
-// Channel protocol tests need callback dispatch without component cycles
-// consuming the state being examined. This fixture permits those notifications
-// while its TaskContext remains stopped; normal components keep their hook gate.
-class TransportCallbackTask : public TaskContext {
-public:
-    explicit TransportCallbackTask(const std::string& name) : TaskContext(name) {}
-    bool dataOnPortHook(PortInterface*) override { return true; }
-};
 
 class MQueueTest
 {
@@ -62,16 +55,16 @@ public:
         mw2 = new OutputPort<double>("mw");
 
         // both tc's are non periodic
-        tc =  new TransportCallbackTask( "root" );
-        tc->ports()->addEventPort( *mr1 );
+        tc =  new TaskContext( "root" );
+        tc->ports()->addPort( *mr1 );
         tc->ports()->addPort( *mw1 );
 
-        t2 = new TransportCallbackTask("other");
-        t2->ports()->addEventPort( *mr2, boost::bind(&MQueueTest::new_data_listener, this, _1) );
+        t2 = new TaskContext("other");
+        t2->ports()->addPort( *mr2);
         t2->ports()->addPort( *mw2 );
 
-        // Run callback dispatch while components stay stopped: these tests
-        // exercise transport channels directly.
+        // Components stay stopped while these tests explicitly receive
+        // transport samples through PortDataAccess.
     }
 
     ~MQueueTest()
@@ -88,11 +81,6 @@ public:
     TaskContext* tc;
     TaskContext* t2;
 
-    PortInterface* signalled_port;
-    void new_data_listener(PortInterface* port)
-    {
-        signalled_port = port;
-    }
 
     // Ports
     InputPort<double>*  mr1;
@@ -122,13 +110,12 @@ public:
     }
 };
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) do { \
-    signalled_port = 0; \
-    code; \
+#define WAIT_FOR_TRANSPORT(code, read_port) do { \
+    BOOST_REQUIRE_EQUAL((code), WriteSuccess); \
     rtos_disable_rt_warning(); \
     usleep(100000); \
     rtos_enable_rt_warning(); \
-    BOOST_CHECK( read_port == signalled_port ); \
+    BOOST_REQUIRE((read_port)->connected()); \
 } while(0)
 
 void MQueueTest::testPortDataConnection()
@@ -144,12 +131,12 @@ void MQueueTest::testPortDataConnection()
     // Check if no-data works
     BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    // Check transport delivery after publication
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 1.0), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 2.0), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
@@ -170,11 +157,11 @@ void MQueueTest::testPortLatestConnection()
     BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 4.0), NewData);
     BOOST_CHECK_EQUAL( 4.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
@@ -217,6 +204,46 @@ BOOST_AUTO_TEST_CASE(removed_policy_kinds_reject_streams_without_creating_channe
     BOOST_CHECK(!mr2->createStream(policy));
     BOOST_REQUIRE(mw1->createStream(policy));
     mw1->disconnect();
+}
+
+BOOST_AUTO_TEST_CASE(explicit_transport_echo_cycle_leaves_the_graph_mutable)
+{
+    class Echo : public TaskContext {
+    public:
+        InputPort<double> input{"input"};
+        OutputPort<double> output{"output"};
+        Echo() : TaskContext("echo") {
+            setActivity(new extras::SequentialActivity());
+            mTriggerOnStart = false;
+            addPort(input);
+            addPort(output);
+            addOperation("stepPorts", &Echo::stepPorts, this, ClientThread);
+        }
+        bool stepPorts() {
+            if (!start()) return false;
+            const bool executed = trigger();
+            const bool stopped = stop();
+            return executed && stopped;
+        }
+        void updateHook() override { output.data() = input.data() + 1; }
+    } echo;
+    BOOST_REQUIRE(mw1->createConnection(echo.input, policy));
+    BOOST_REQUIRE(echo.output.connectTo(mr2));
+    const auto cycles = echo.getCycleCounter();
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(*mw1, 41.0), WriteSuccess);
+    usleep(100000);
+    BOOST_CHECK_EQUAL(echo.getCycleCounter(), cycles);
+    BOOST_CHECK_EQUAL(echo.input.data(), 0.0);
+    double value = 0;
+    BOOST_REQUIRE_EQUAL(receiveTransportValue(*mr2, value, 42.0, &echo), NewData);
+    BOOST_CHECK_EQUAL(value, 42.0);
+    BOOST_CHECK_EQUAL(echo.input.data(), 41.0);
+    BOOST_CHECK(!echo.isRunning());
+    // Mqueue channels are connectionless: disconnect each local endpoint.
+    mw1->disconnect();
+    echo.input.disconnect();
+    BOOST_CHECK(!mw1->connected());
+    BOOST_CHECK(!echo.input.connected());
 }
 
 BOOST_AUTO_TEST_CASE( testPortConnections )
@@ -414,4 +441,3 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
 }
 
 BOOST_AUTO_TEST_SUITE_END()
-

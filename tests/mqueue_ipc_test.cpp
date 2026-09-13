@@ -1,3 +1,4 @@
+#include "transport_test.hpp"
 #include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  mqueue_ipc_test.cpp
@@ -66,19 +67,15 @@ MQueueTest::tearDown()
     delete mw2;
 }
 
-void MQueueTest::new_data_listener(PortInterface* port)
-{
-    signalled_port = port;
-}
 
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) \
-    signalled_port = 0; \
-    code; \
+#define WAIT_FOR_TRANSPORT(code, read_port) do { \
+    BOOST_REQUIRE_EQUAL((code), WriteSuccess); \
     rtos_disable_rt_warning(); \
     usleep(100000); \
     rtos_enable_rt_warning(); \
-    BOOST_CHECK( read_port == signalled_port );
+    BOOST_REQUIRE((read_port)->connected()); \
+} while(0)
 
 void MQueueTest::testPortDataConnection()
 {
@@ -93,12 +90,12 @@ void MQueueTest::testPortDataConnection()
     // Check if no-data works
     BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2)
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    // Check transport delivery after publication
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 1.0), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 2.0), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
@@ -119,11 +116,11 @@ void MQueueTest::testPortLatestConnection()
     BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 4.0), NewData);
     BOOST_CHECK_EQUAL( 4.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
@@ -154,10 +151,6 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-                boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();
@@ -222,10 +215,6 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-            boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();
@@ -341,10 +330,6 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-            boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();

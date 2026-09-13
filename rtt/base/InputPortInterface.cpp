@@ -59,21 +59,11 @@ using namespace std;
 InputPortInterface::InputPortInterface(std::string const& name, ConnPolicy const& default_policy)
 : PortInterface(name)
   , default_policy( default_policy )
-#ifdef ORO_SIGNALLING_PORTS
-  , new_data_on_port_event(0)
-#else
- , msignal_interface(false)
-#endif
 {}
 
 InputPortInterface::~InputPortInterface()
 {
     cmanager.disconnect();
-#ifdef ORO_SIGNALLING_PORTS
-    if ( new_data_on_port_event) {
-        delete new_data_on_port_event;
-    }
-#endif
 }
 
 ConnPolicy InputPortInterface::getDefaultPolicy() const
@@ -150,14 +140,6 @@ InputPortInterface::SourceConnections InputPortInterface::getSourceConnections()
     return result;
 }
 
-#ifdef ORO_SIGNALLING_PORTS
-InputPortInterface::NewDataOnPortEvent* InputPortInterface::getNewDataOnPortEvent()
-{
-    if (!new_data_on_port_event)
-        new_data_on_port_event = new NewDataOnPortEvent();
-    return new_data_on_port_event;
-}
-#endif
 
 bool InputPortInterface::connectTo(PortInterface* other, ConnPolicy const& policy)
 {
@@ -185,18 +167,6 @@ bool InputPortInterface::addConnection(ConnID* cid, ChannelElementBase::shared_p
     return cmanager.addConnection( cid, channel, policy);
 }
 
-#ifndef ORO_SIGNALLING_PORTS
-void InputPortInterface::signal()
-{
-    if (iface && msignal_interface)
-        iface->dataOnPort(this);
-}
-
-void InputPortInterface::signalInterface(bool true_false)
-{
-    msignal_interface = true_false;
-}
-#endif
 
 FlowStatus InputPortInterface::receive(DataSourceBase::shared_ptr, bool)
 { throw std::runtime_error("calling default InputPortInterface::receive(datasource) implementation"); }

@@ -39,20 +39,20 @@ using namespace RTT;
 using namespace RTT::detail;
 
 
-class EventPortsTC : public TaskContext
+class ScheduledPortsTC : public TaskContext
 {
 public:
-    bool had_event;
-    int  nb_events;
-    EventPortsTC(): TaskContext("eptc") { resetStats(); }
+    bool was_updated;
+    int  updates;
+    ScheduledPortsTC(): TaskContext("eptc") { resetStats(); }
     void updateHook()
     {
-        nb_events++;
-        had_event = true;
+        updates++;
+        was_updated = true;
     }
     void resetStats() {
-        nb_events = 0;
-        had_event = false;
+        updates = 0;
+        was_updated = false;
     }
 };
 
@@ -63,26 +63,21 @@ class PortsTestFixture
 {
 public:
     TaskContext* tc;
-    EventPortsTC* tce;
-    EventPortsTC* tc2;
-    EventPortsTC* tc3;
+    ScheduledPortsTC* tce;
+    ScheduledPortsTC* tc2;
+    ScheduledPortsTC* tc3;
     ActivityInterface* tsim;
     ActivityInterface* stsim;
     ActivityInterface* slsim;
 
-    PortInterface* signalled_port;
-    void new_data_listener(PortInterface* port)
-    {
-        signalled_port = port;
-    }
 
 public:
     PortsTestFixture()
     {
         tc =  new TaskContext( "root", TaskContext::Stopped );
-        tce = new EventPortsTC();
-        tc2 = new EventPortsTC();
-        tc3 = new EventPortsTC();
+        tce = new ScheduledPortsTC();
+        tc2 = new ScheduledPortsTC();
+        tc3 = new ScheduledPortsTC();
         tce->setActivity( new SequentialActivity() );
         tc2->setActivity( new SequentialActivity() );
         tc->setActivity( new SimulationActivity(0.001) );
@@ -526,34 +521,6 @@ BOOST_AUTO_TEST_CASE( testPortObjects)
     BOOST_CHECK( tc->ports()->getPort("Write") == 0 );
 }
 
-#ifdef ORO_SIGNALLING_PORTS
-BOOST_AUTO_TEST_CASE(testPortSignalling)
-{
-    OutputPort<double> wp1("Write");
-    InputPort<double>  rp1("Read");
-
-    Handle hl( rp1.getNewDataOnPortEvent()->setup(
-                boost::bind(&PortsTestFixture::new_data_listener, this, _1) ) );
-    hl.connect();
-
-    wp1.createConnection(rp1, ConnPolicy::data());
-    signalled_port = 0;
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(wp1, 0.1), WriteSuccess );
-    BOOST_CHECK(&rp1 == signalled_port);
-
-    wp1.disconnect();
-    wp1.createConnection(rp1, ConnPolicy::data());
-    signalled_port = 0;
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(wp1, 0.1), WriteSuccess );
-    BOOST_CHECK(&rp1 == signalled_port);
-    signalled_port = 0;
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(wp1, 0.1), WriteSuccess );
-    BOOST_CHECK(&rp1 == signalled_port);
-    signalled_port = 0;
-    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::publish(wp1, 0.1), WriteSuccess );
-    BOOST_CHECK(&rp1 == signalled_port);
-}
-#endif
 
 BOOST_AUTO_TEST_CASE(testPortAddRemove)
 {
@@ -562,8 +529,8 @@ BOOST_AUTO_TEST_CASE(testPortAddRemove)
     InputPort<double>*  ep1 = new InputPort<double>("ERead");
     TaskContext tc("tc");
     tc.addPort( *wp1 );
-    tc.addEventPort( *rp1, boost::bind(&PortsTestFixture::new_data_listener, this, _1) );
-    tc.addEventPort( *ep1 );
+    tc.addPort( *rp1);
+    tc.addPort( *ep1 );
 
     wp1->createConnection(*rp1, ConnPolicy::data());
     wp1->createConnection(*ep1, ConnPolicy::data());
@@ -593,8 +560,8 @@ BOOST_AUTO_TEST_CASE(testPortAddRemove)
     ep1 = new InputPort<double>("ERead");
 
     tc.addPort( *wp1 );
-    tc.addEventPort( *rp1, boost::bind(&PortsTestFixture::new_data_listener, this, _1) );
-    tc.addEventPort( *ep1 );
+    tc.addPort( *rp1);
+    tc.addPort( *ep1 );
 
     wp1->createConnection(*rp1, ConnPolicy::data());
     wp1->createConnection(*ep1, ConnPolicy::data());
@@ -617,39 +584,39 @@ BOOST_AUTO_TEST_CASE(testPortAddRemove)
     tc.stop();
 }
 
-BOOST_AUTO_TEST_CASE(testEventPortSignalling)
+BOOST_AUTO_TEST_CASE(testPortPublicationWaitsForExplicitTrigger)
 {
     OutputPort<double> output("Write");
     InputPort<double> input("Read");
-    tce->addEventPort(input, boost::bind(&PortsTestFixture::new_data_listener, this, _1));
+    tce->addPort(input);
     BOOST_REQUIRE(output.createConnection(input, ConnPolicy::data()));
     BOOST_REQUIRE(tce->start());
     tce->resetStats();
-    signalled_port = nullptr;
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(output, 0.1), WriteSuccess);
-    BOOST_CHECK_EQUAL(signalled_port, &input);
-    BOOST_CHECK(tce->had_event);
+    BOOST_CHECK(!tce->was_updated);
+    BOOST_CHECK_EQUAL(input.data(), 0.0);
+    BOOST_REQUIRE(tce->trigger());
+    BOOST_CHECK(tce->was_updated);
     BOOST_CHECK_EQUAL(input.data(), 0.1);
     BOOST_CHECK_EQUAL(input.status(), NewData);
     BOOST_REQUIRE(tce->stop());
     tce->ports()->removePort(input.getName());
 }
 
-BOOST_AUTO_TEST_CASE(testEventPortSignallingFromSlave)
+BOOST_AUTO_TEST_CASE(testPortPublicationWaitsForSlaveCycle)
 {
     OutputPort<double> output("Write");
     InputPort<double> input("Read");
-    tc3->addEventPort(input, boost::bind(&PortsTestFixture::new_data_listener, this, _1));
+    tc3->addPort(input);
     BOOST_REQUIRE(output.createConnection(input, ConnPolicy::data()));
     BOOST_REQUIRE(tc3->start());
     tc3->resetStats();
-    signalled_port = nullptr;
     // The latest state at the consumer boundary wins; there is no FIFO drain.
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(output, 0.1), WriteSuccess);
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(output, 0.2), WriteSuccess);
+    BOOST_CHECK(!tc3->was_updated);
     BOOST_REQUIRE(slsim->execute());
-    BOOST_CHECK_EQUAL(signalled_port, &input);
-    BOOST_CHECK(tc3->had_event);
+    BOOST_CHECK(tc3->was_updated);
     BOOST_CHECK_EQUAL(input.data(), 0.2);
     BOOST_CHECK_EQUAL(input.status(), NewData);
     BOOST_REQUIRE(slsim->execute());
@@ -668,7 +635,7 @@ BOOST_AUTO_TEST_CASE(testPlainPortNotSignalling)
     BOOST_REQUIRE(tce->start());
     tce->resetStats();
     BOOST_REQUIRE_EQUAL(internal::PortDataAccess::publish(output, 0.1), WriteSuccess);
-    BOOST_CHECK(!tce->had_event);
+    BOOST_CHECK(!tce->was_updated);
     BOOST_CHECK_EQUAL(input.data(), 0.0);
     BOOST_REQUIRE(tce->stop());
     tce->ports()->removePort(input.getName());
