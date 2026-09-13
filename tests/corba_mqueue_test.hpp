@@ -64,7 +64,7 @@ public:
 
     // helper test functions
     void testPortDataConnection();
-    void testPortBufferConnection();
+    void testPortLatestConnection();
     void testPortDisconnected();
 };
 

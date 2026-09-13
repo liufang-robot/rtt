@@ -59,17 +59,18 @@ class InputPort : public base::InputPortInterface {
     T image_{};
     typename internal::ReferenceDataSource<T>::shared_ptr image_source_;
     boost::shared_ptr<internal::PortSnapshot<T>> snapshot_;
+    internal::ChannelReadCursor read_cursor_;
 
     InputPort(const InputPort&) = delete;
     InputPort& operator=(const InputPort&) = delete;
-    bool connectionAdded(base::ChannelElementBase::shared_ptr, const ConnPolicy&) { return true; }
     base::DataSourceBase::shared_ptr imageSource() override { return image_source_; }
     void setImageStatus(FlowStatus value) override {
         if (value == NewData) snapshot_->publish(image_);
         image_status_.store(value, std::memory_order_release);
     }
     FlowStatus refreshImage() override {
-        FlowStatus result = receive(image_, false);
+        FlowStatus result = getEndpoint()->getReadEndpoint()->readWithCursor(image_, read_cursor_, false);
+        traceRead(result);
         setImageStatus(result);
         return result;
     }
@@ -99,11 +100,13 @@ public:
         if (!prepareConnectionChange()) throw std::logic_error("input image is active");
         image_ = value;
         snapshot_->initialize(value);
+        read_cursor_ = {};
         setImageStatus(NoData);
     }
     void clear() override {
         if (!prepareConnectionChange()) return;
         getEndpoint()->getReadEndpoint()->clear();
+        read_cursor_ = {};
         setImageStatus(NoData);
     }
     void getDataSample(T& value) { value = getEndpoint()->getReadEndpoint()->data_sample(); }
@@ -111,6 +114,20 @@ public:
     base::PortInterface* clone() const override { return new InputPort<T>(getName()); }
     base::PortInterface* antiClone() const override { return new OutputPort<T>(getName()); }
     base::DataSourceBase* getDataSource() override { return new internal::PortSnapshotSource<T>(snapshot_, true); }
+    bool addConnection(internal::ConnID* id, base::ChannelElementBase::shared_ptr channel,
+                       const ConnPolicy& policy = ConnPolicy()) override {
+        if (!dynamic_cast<base::ChannelElement<T>*>(channel.get())) return false;
+        if (!base::InputPortInterface::addConnection(id, channel, policy)) return false;
+        // Release any prior channel during inactive setup, never on the next
+        // cyclic read when the cursor first encounters replacement storage.
+        read_cursor_ = {};
+        return true;
+    }
+    bool createConnection(internal::SharedConnectionBase::shared_ptr shared,
+                          const ConnPolicy& policy = ConnPolicy()) override {
+        if (!shared || !dynamic_cast<base::ChannelElement<T>*>(shared.get())) return false;
+        return base::InputPortInterface::createConnection(shared, policy);
+    }
     bool createStream(const ConnPolicy& policy) override {
         return prepareConnectionChange() && internal::ConnFactory::createStream(*this, policy);
     }

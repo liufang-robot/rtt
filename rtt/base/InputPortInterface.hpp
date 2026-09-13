@@ -112,6 +112,9 @@ namespace RTT
          */
         SourceConnections getSourceConnections() const;
 
+        // Runtime topology check; unregistered transport endpoints can fan in.
+        bool acceptsWholeConnection(const OutputPortInterface* source) const;
+
         InputPortInterface(std::string const& name, ConnPolicy const& default_policy = ConnPolicy());
 
         virtual ~InputPortInterface();

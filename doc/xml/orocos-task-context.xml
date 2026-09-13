@@ -1064,8 +1064,16 @@ finalizeConnections()</programlisting>
         input and output ports before activation when using dynamically allocated
         whole values. Do not grow such values during real-time execution. Dynamic
         containers cannot provide stable element selectors; use fixed arrays for
-        element connections. State ports use latest-value channels, and buffered
-        component inputs or multiple whole-port writers fail finalization.</para>
+        element connections. State ports use latest-value channels. FIFO data-port
+        policies are unavailable: removed numeric kinds are rejected during connection
+        or stream creation. A component input accepts at most one whole-port writer,
+        including writers sharing a channel. Multiple sources may target disjoint
+        member regions; pre-existing conflicting graphs fail finalization.</para>
+        <para>DATA remains kind 0; UNBUFFERED (-1) is available only for output
+        streaming. Lock policies and storage-sharing placement remain supported.
+        The size field is a transport queue-depth hint, such as POSIX mqueue
+        capacity. Transport queues, execution queues, and generic buffer utilities
+        are independent of data-port sample retention.</para>
         <para>The boundary is per component. Independent components can observe
         different source cycles. Connecting fields from several sources does not
         create a simultaneous global snapshot of those sources.</para>
@@ -2108,10 +2116,10 @@ finalizeConnections()</programlisting>
 	Suppose that Task A has a
 	port a_port, Task B a b_port and Task C a c_port (all are of type PortInterface&amp;). Then
 	 connections are made as follows:
-	<programlisting>  // Create a connection with a buffer of size 10:
-  <classname>RTT::ConnPolicy</classname> policy = RTT::ConnPolicy::buffer(10);
+	<programlisting>  // Create a latest-value DATA connection:
+  <classname>RTT::ConnPolicy</classname> policy = RTT::ConnPolicy::data();
   a_port.connectTo( &amp;b_port, policy );
-  // Create an unbuffered 'shared data' connection:
+  // Fan out the same output to another latest-value input:
   policy = RTT::ConnPolicy::data();
   a_port.connectTo( &amp;c_port, policy );</programlisting>
 	The order of connections does not matter; the following would also work:

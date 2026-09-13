@@ -42,6 +42,7 @@
 #include "Channels.hpp"
 #include "ConnID.hpp"
 #include "PortConnectionLock.hpp"
+#include <memory>
 
 namespace RTT
 { namespace internal {
@@ -91,11 +92,16 @@ namespace RTT
          */
         bool channelReady(base::ChannelElementBase::shared_ptr const& channel, ConnPolicy const& policy, ConnID *conn_id)
         {
-            // cid is deleted/owned by the ConnectionManager.
+            // Caller-provided IDs remain caller-owned on failure. An ID made
+            // here transfers to ConnectionManager only after registration.
+            std::unique_ptr<internal::ConnID> generated_id;
             if ( channel ) {
-                if (!conn_id) conn_id = new internal::SimpleConnID();
-                if ( channel->inputReady(this) ) {
-                    port->addConnection(conn_id, channel, policy);
+                if (!conn_id) {
+                    generated_id.reset(new internal::SimpleConnID());
+                    conn_id = generated_id.get();
+                }
+                if (channel->inputReady(this) && port->addConnection(conn_id, channel, policy)) {
+                    generated_id.release();
                     return true;
                 }
             }
@@ -200,4 +206,3 @@ namespace RTT
 }}
 
 #endif
-

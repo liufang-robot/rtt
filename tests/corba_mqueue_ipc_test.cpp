@@ -61,7 +61,7 @@ public:
 
     // helper test functions
     void testPortDataConnection();
-    void testPortBufferConnection();
+    void testPortLatestConnection();
     void testPortDisconnected();
 };
 
@@ -148,9 +148,9 @@ void CorbaMQueueIPCTest::testPortDataConnection()
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
-void CorbaMQueueIPCTest::testPortBufferConnection()
+void CorbaMQueueIPCTest::testPortLatestConnection()
 {
-    // This test assumes that there is a buffer connection mw1 => server => mr1 of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mw1->connected() );
     BOOST_CHECK( mr1->connected() );
@@ -164,13 +164,7 @@ void CorbaMQueueIPCTest::testPortBufferConnection()
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr1);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr1);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr1);
-    // it will be emptied too fast by mqueue.
-    //ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr1, value) );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr1, value), NewData );
     BOOST_CHECK_EQUAL( 3.0, value );
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr1, value), OldData );
 }
@@ -230,24 +224,24 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     ports->disconnectPort("mr");
     testPortDisconnected();
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = false;
     policy.size = 3;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
     BOOST_CHECK( ports->createConnection("mw", ports2, "mr", policy) );
     BOOST_CHECK( ports2->createConnection("mw", ports, "mr", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports->disconnectPort("mw");
     ports2->disconnectPort("mw");
     testPortDisconnected();
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = true;
     policy.size = 3;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
     BOOST_CHECK( ports->createConnection("mw", ports2, "mr", policy) );
     BOOST_CHECK( ports2->createConnection("mw", ports, "mr", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports->disconnectPort("mw");
     ports2->disconnectPort("mw");
     testPortDisconnected();

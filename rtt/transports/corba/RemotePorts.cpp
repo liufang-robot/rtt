@@ -208,6 +208,7 @@ RTT::base::ChannelElementBase::shared_ptr RemoteInputPort::buildRemoteChannelOut
 
 bool RemoteInputPort::createConnection( internal::SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy )
 {
+    if (policy.type != ConnPolicy::DATA) return false;
     try {
         CConnPolicy cpolicy = toCORBA(policy);
         cpolicy.name_id = CORBA::string_dup( shared_connection->getName().c_str() );
@@ -276,6 +277,7 @@ bool RemoteOutputPort::disconnect(PortInterface* port)
 
 bool RemoteOutputPort::createConnection( RTT::base::InputPortInterface& sink, RTT::ConnPolicy const& policy )
 {
+    if (policy.type != ConnPolicy::DATA || !sink.acceptsWholeConnection(this)) return false;
     try {
         CConnPolicy cpolicy = toCORBA(policy);
         // first check if we're connecting to another remote:

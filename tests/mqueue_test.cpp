@@ -34,13 +34,14 @@ using namespace RTT::detail;
 #include <InputPort.hpp>
 #include <OutputPort.hpp>
 #include <TaskContext.hpp>
+#include <rtt/types/TypeTransporter.hpp>
 #include <string>
 
 using namespace RTT;
 using namespace RTT::detail;
 
 // Channel protocol tests need callback dispatch without component cycles
-// consuming the FIFO being examined. This fixture permits those notifications
+// consuming the state being examined. This fixture permits those notifications
 // while its TaskContext remains stopped; normal components keep their hook gate.
 class TransportCallbackTask : public TaskContext {
 public:
@@ -70,7 +71,7 @@ public:
         t2->ports()->addPort( *mw2 );
 
         // Run callback dispatch while components stay stopped: these tests
-        // exercise transport channels directly, including FIFO primitives.
+        // exercise transport channels directly.
     }
 
     ~MQueueTest()
@@ -103,7 +104,7 @@ public:
 
     // helper test functions
     void testPortDataConnection();
-    void testPortBufferConnection();
+    void testPortLatestConnection();
     void testPortDisconnected();
 };
 
@@ -155,10 +156,10 @@ void MQueueTest::testPortDataConnection()
     rtos_disable_rt_warning();
 }
 
-void MQueueTest::testPortBufferConnection()
+void MQueueTest::testPortLatestConnection()
 {
     rtos_enable_rt_warning();
-    // This test assumes that there is a buffer connection mw1 => mr2 of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mw1->connected() );
     BOOST_CHECK( mr2->connected() );
@@ -172,13 +173,9 @@ void MQueueTest::testPortBufferConnection()
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);  // because size == 3
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 3.0, value );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
+    BOOST_CHECK_EQUAL( 4.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
@@ -198,6 +195,30 @@ BOOST_FIXTURE_TEST_SUITE(  MQueueTestSuite,  MQueueFixture )
  * This unit test checks a manual setup of mqueue data flow,
  * without any use of CORBA to mediate the connection.
  */
+BOOST_AUTO_TEST_CASE(removed_policy_kinds_reject_streams_without_creating_channels)
+{
+    auto* protocol = mw1->getTypeInfo()->getProtocol(ORO_MQUEUE_PROTOCOL_ID);
+    BOOST_REQUIRE(protocol);
+    policy.name_id = "/rtt_removed_policy_test";
+    policy.size = 4;
+    for (int kind : {1, 2, 42, -2}) {
+        policy.type = kind;
+        BOOST_CHECK(!policy.validType());
+        BOOST_CHECK(!mw1->createStream(policy));
+        BOOST_CHECK(!mr2->createStream(policy));
+        BOOST_CHECK(!protocol->createStream(mw1, policy, true));
+        BOOST_CHECK(!protocol->createStream(mr2, policy, false));
+        BOOST_CHECK(!mw1->connected());
+        BOOST_CHECK(!mr2->connected());
+    }
+    policy.type = ConnPolicy::UNBUFFERED;
+    policy.pull = false;
+    BOOST_CHECK(policy.validType());
+    BOOST_CHECK(!mr2->createStream(policy));
+    BOOST_REQUIRE(mw1->createStream(policy));
+    mw1->disconnect();
+}
+
 BOOST_AUTO_TEST_CASE( testPortConnections )
 {
 #if 1
@@ -224,25 +245,25 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer1";
+    //policy.name_id = "latest1";
     BOOST_REQUIRE( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer2";
+    //policy.name_id = "latest2";
     BOOST_REQUIRE( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     //while(1) sleep(1);
     mw1->disconnect();
     mr2->disconnect();
@@ -252,7 +273,7 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
 
 BOOST_AUTO_TEST_CASE( testPortStreams )
 {
-    // Test all four configurations of Data/Buffer & push/pull
+    // Test all four configurations of default/explicit transport capacity and push/pull
     policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.name_id = "/data1";
@@ -273,24 +294,24 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_REQUIRE( mw1->createStream( policy ) );
     BOOST_REQUIRE( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
     BOOST_REQUIRE( mw1->createStream( policy ) );
     BOOST_REQUIRE( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
@@ -306,10 +327,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsTimeout )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_REQUIRE( mr2->createStream( policy ) == false );
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
@@ -326,10 +347,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsWrongName )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "buffer1";
+    policy.name_id = "latest1";
     BOOST_REQUIRE( mw2->createStream( policy ) == false );
     BOOST_CHECK( mw2->connected() == false );
     mw2->disconnect();

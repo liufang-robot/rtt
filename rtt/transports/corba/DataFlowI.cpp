@@ -361,6 +361,7 @@ CChannelElement_ptr CDataFlowInterface_i::buildChannelOutput(
     CORBA_CHECK_THREAD();
     // Convert to RTT policy.
     ConnPolicy policy2 = toRTT(corba_policy);
+    if (policy2.type != ConnPolicy::DATA) throw CInvalidArgument();
 
     // For shared push connections, also build or check the local shared connection instance here
     ChannelElementBase::shared_ptr end;
@@ -472,6 +473,7 @@ CChannelElement_ptr CDataFlowInterface_i::buildChannelInput(
     CORBA_CHECK_THREAD();
     // Convert to RTT policy.
     ConnPolicy policy2 = toRTT(corba_policy);
+    if (policy2.type != ConnPolicy::DATA) throw CInvalidArgument();
 
     // Now create the output-side channel elements.
     ChannelElementBase::shared_ptr start = type_info->buildChannelInput(*port, policy2);
@@ -566,6 +568,7 @@ CChannelElement_ptr CDataFlowInterface_i::buildChannelInput(
 
     // Convert to RTT policy.
     ConnPolicy policy2 = toRTT(corba_policy);
+    if (policy2.type != ConnPolicy::DATA) throw CInvalidArgument();
 
     // For shared push connections, also build or check the local shared connection instance here
     internal::SharedConnectionBase::shared_ptr shared_connection;

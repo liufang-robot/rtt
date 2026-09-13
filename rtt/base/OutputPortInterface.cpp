@@ -79,7 +79,16 @@ void OutputPortInterface::disconnect()
 
 bool OutputPortInterface::addConnection(ConnID* port_id, ChannelElementBase::shared_ptr channel_input, ConnPolicy const& policy)
 {
-    if (!prepareConnectionChange()) return false;
+    if (!channel_input || !policy.validType() || !prepareConnectionChange()) return false;
+    if (auto shared = boost::dynamic_pointer_cast<internal::SharedConnectionBase>(channel_input)) {
+        if (!internal::ConnFactory::validateSharedConnection(this, 0, shared, policy)) return false;
+    } else {
+        for (auto* endpoint : channel_input->getEndpointPorts(false)) {
+            auto* input = dynamic_cast<InputPortInterface*>(endpoint);
+            if (!input || !input->getInterface() || !input->getInterface()->getOwner()) continue;
+            if (!input->connectionChangeAllowed() || !input->acceptsWholeConnection(this)) return false;
+        }
+    }
     if ( this->connectionAdded(channel_input, policy) ) {
         return cmanager.addConnection(port_id, channel_input, policy);
     }
@@ -91,9 +100,6 @@ WriteStatus OutputPortInterface::publish(DataSourceBase::shared_ptr)
 
 bool OutputPortInterface::createDataConnection( InputPortInterface& input, int lock_policy )
 { return createConnection( input, ConnPolicy::data(lock_policy) ); }
-
-bool OutputPortInterface::createBufferConnection( InputPortInterface& input, int size, int lock_policy )
-{ return createConnection( input, ConnPolicy::buffer(size, lock_policy) ); }
 
 bool OutputPortInterface::createConnection( InputPortInterface& input )
 { return createConnection(input, input.getDefaultPolicy()); }

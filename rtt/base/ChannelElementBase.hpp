@@ -51,6 +51,7 @@
 #include "../os/Mutex.hpp"
 
 #include <list>
+#include <vector>
 #include <map>
 
 namespace RTT { namespace base {
@@ -226,6 +227,10 @@ namespace RTT { namespace base {
          * port (or a proxy representing the port) otherwise.
          */
         virtual PortInterface* getPort() const;
+
+        /** Topology snapshot in one direction; null entries denote opaque leaves.
+         * Port lifetime and graph mutations must be serialized by the caller. */
+        std::vector<PortInterface*> getEndpointPorts(bool upstream) const;
 
         /**
          * Get a pointer to the connection policy used to build this channel element, if available.
@@ -411,6 +416,7 @@ namespace RTT { namespace base {
 
     public:
         MultipleOutputsChannelElementBase();
+        Outputs getOutputs() const;
 
         /**
          * Returns true, if this channel element has at least one output, independent of whether is has an

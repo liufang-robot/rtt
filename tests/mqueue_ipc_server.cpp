@@ -105,10 +105,10 @@ void MQueueTest::testPortDataConnection()
     rtos_disable_rt_warning();
 }
 
-void MQueueTest::testPortBufferConnection()
+void MQueueTest::testPortLatestConnection()
 {
     rtos_enable_rt_warning();
-    // This test assumes that there is a buffer connection mw1 => mr2 of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mw1->connected() );
     BOOST_CHECK( mr2->connected() );
@@ -122,13 +122,9 @@ void MQueueTest::testPortBufferConnection()
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);  // because size == 3
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 3.0, value );
+    ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
+    BOOST_CHECK_EQUAL( 4.0, value );
     BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
@@ -190,25 +186,25 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer1";
+    //policy.name_id = "latest1";
     BOOST_CHECK( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer2";
+    //policy.name_id = "latest2";
     BOOST_CHECK( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     //while(1) sleep(1);
     mw1->disconnect();
     mr2->disconnect();
@@ -235,7 +231,7 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     DataFlowInterface* ports2 = t2->ports();
 
 
-    // Test all four configurations of Data/Buffer & push/pull
+    // Test all four configurations of default/explicit transport capacity and push/pull
     policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.name_id = "/data1";
@@ -256,24 +252,24 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_CHECK( mw1->createStream( policy ) );
     BOOST_CHECK( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
     BOOST_CHECK( mw1->createStream( policy ) );
     BOOST_CHECK( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
@@ -297,10 +293,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsTimeout )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_CHECK( mr2->createStream( policy ) == false );
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
@@ -325,10 +321,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsWrongName )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "buffer1";
+    policy.name_id = "latest1";
     BOOST_CHECK( mr2->createStream( policy ) == false );
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();

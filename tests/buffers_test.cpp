@@ -17,6 +17,7 @@
  ***************************************************************************/
 
 #include "unit.hpp"
+#include <rtt/base/BufferUnSync.hpp>
 
 #include <iostream>
 #include <boost/scoped_ptr.hpp>

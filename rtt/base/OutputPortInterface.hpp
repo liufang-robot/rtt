@@ -92,12 +92,6 @@ namespace RTT
          */
         bool createDataConnection( InputPortInterface& sink, int lock_policy = ConnPolicy::LOCK_FREE );
 
-        /** Connects this write port to the given read port, using a buffered
-         * policy, with the buffer of the given size and the given locking
-         * mechanism
-         */
-        bool createBufferConnection( InputPortInterface& sink, int size, int lock_policy = ConnPolicy::LOCK_FREE );
-
         using PortInterface::createConnection;
 
         /** Connects this write port to the given read port, using as policy

@@ -218,7 +218,8 @@
   OutputPort&lt;MyData&gt; p_out("name");
 
   // Create a ConnPolicy object:
-  ConnPolicy policy = buffer(10); // buffered connection with 10 elements.
+  ConnPolicy policy = ConnPolicy::data();
+  policy.size = 10; // POSIX transport queue depth; the input retains the latest value.
   policy.transport = ORO_MQUEUE_PROTOCOL_ID; // the MQueue protocol id
   policy.name_id   = "mydata_conn";          // the connection id
 
@@ -231,7 +232,8 @@
   InputPort&lt;MyData&gt; p_in("indata");
 
   // Create a ConnPolicy object:
-  ConnPolicy policy = ConnPolicy::buffer(10); // buffered connection with 10 elements.
+  ConnPolicy policy = ConnPolicy::data();
+  policy.size = 10; // POSIX transport queue depth; the input retains the latest value.
   policy.transport = ORO_MQUEUE_PROTOCOL_ID; // the MQueue protocol id
   policy.name_id   = "mydata_conn";          // the connection id
 
@@ -295,7 +297,7 @@
       <programlisting>  TaskContext *task_a, *task_b;
   // init task_a, task_b...
 
-  ConnPolicy policy = ConnPolicy::buffer(10);
+  ConnPolicy policy = ConnPolicy::data();
 
   // override default transport policy to trigger out-of-band:
   policy.transport = ORO_MQUEUE_PROTOCOL_ID;
@@ -329,7 +331,7 @@
   CControlTask_var task_a, task_b;
   // init task_a, task_b...
 
-  CConnPolicy cpolicy = toCORBA( RTT::ConnPolicy::buffer(10) );
+  CConnPolicy cpolicy = toCORBA( RTT::ConnPolicy::data() );
 
   // override default transport policy to trigger out-of-band:
   cpolicy.transport = ORO_MQUEUE_PROTOCOL_ID;
@@ -357,7 +359,7 @@
   CControlTask_var task_a, task_b;
   // init task_a, task_b...
 
-  CConnPolicy cpolicy = toCORBA( RTT::ConnPolicy::buffer(10) );
+  CConnPolicy cpolicy = toCORBA( RTT::ConnPolicy::data() );
 
   // override default transport policy and provide a name:
   cpolicy.transport = ORO_MQUEUE_PROTOCOL_ID;

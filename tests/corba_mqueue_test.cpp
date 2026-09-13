@@ -104,9 +104,9 @@ void CorbaMQueueTest::testPortDataConnection()
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
-void CorbaMQueueTest::testPortBufferConnection()
+void CorbaMQueueTest::testPortLatestConnection()
 {
-    // This test assumes that there is a buffer connection mw1 => mr2 of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mw1->connected() );
     BOOST_CHECK( mr2->connected() );
@@ -120,13 +120,7 @@ void CorbaMQueueTest::testPortBufferConnection()
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
     ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
-    // it will be emptied too fast by mqueue.
-    //ASSERT_PORT_SIGNALLING(RTT::internal::PortDataAccess::publish(*mw1, 4.0), 0);
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( RTT::internal::PortDataAccess::receive(*mr2, value) );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), NewData );
     BOOST_CHECK_EQUAL( 3.0, value );
     BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mr2, value), OldData );
 }
@@ -185,21 +179,21 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
 
 #if 1
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = false;
     policy.size = 3;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
     BOOST_CHECK( ports->createConnection("mw", ports2, "mr", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports->disconnectPort("mw");
     testPortDisconnected();
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = true;
     policy.size = 3;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
     BOOST_CHECK( ports->createConnection("mw", ports2, "mr", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports->disconnectPort("mw");
     testPortDisconnected();
 #endif

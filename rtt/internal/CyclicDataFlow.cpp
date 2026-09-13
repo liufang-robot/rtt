@@ -305,6 +305,7 @@ bool CyclicDataFlow::finalize() {
                 if (impl->subscriptions[j]->destination == input) assembly.sources.push_back(impl->subscriptions[j].get());
             internal::ConnectionManager::Connections connections = input->getManager()->getConnections();
             if (connections.size() > 1 || (!assembly.sources.empty() && !connections.empty())) return false;
+            if (assembly.sources.empty() && input->getSourceConnections().size() > 1) return false;
             for (internal::ConnectionManager::Connections::const_iterator c = connections.begin(); c != connections.end(); ++c)
                 if (boost::get<2>(*c).type != ConnPolicy::DATA) return false;
             if (assembly.sources.empty()) impl->inputs.push_back(input);

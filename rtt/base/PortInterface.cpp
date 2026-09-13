@@ -127,6 +127,7 @@ Service* PortInterface::createPortObject()
 
 bool PortInterface::removeConnection(ConnID* conn)
 {
+    if (!prepareConnectionChange()) return false;
     return cmanager.removeConnection(conn);
 }
 
@@ -166,6 +167,18 @@ bool PortInterface::connectionChangeAllowed() const {
             !cyclicDependencies[i]->connectionChangeAllowed(*this)) return false;
     internal::ConnectionManager::Connections connections = cmanager.getConnections();
     for (internal::ConnectionManager::Connections::const_iterator it = connections.begin(); it != connections.end(); ++it) {
+        if (auto shared = dynamic_cast<internal::SharedConnID*>(boost::get<0>(*it).get())) {
+            auto peers = shared->connection->getEndpointPorts(true);
+            const auto inputs = shared->connection->getEndpointPorts(false);
+            peers.insert(peers.end(), inputs.begin(), inputs.end());
+            for (auto* port : peers) {
+                if (!port) continue;
+                TaskContext* owner = port->getInterface() ? port->getInterface()->getOwner() : 0;
+                if (owner && (owner->base::TaskCore::isRunning() || owner->base::TaskCore::getTargetState() >= base::TaskCore::Running)) return false;
+                for (auto* plan : port->cyclicDependencies)
+                    if (plan->owner().base::TaskCore::isRunning() || plan->owner().base::TaskCore::getTargetState() >= base::TaskCore::Running) return false;
+            }
+        }
         internal::LocalConnID* id = dynamic_cast<internal::LocalConnID*>(boost::get<0>(*it).get());
         TaskContext* peer = id && id->ptr && id->ptr->getInterface() ? id->ptr->getInterface()->getOwner() : 0;
         if (peer && (peer->base::TaskCore::isRunning() || peer->base::TaskCore::getTargetState() >= base::TaskCore::Running)) return false;
@@ -200,6 +213,15 @@ void PortInterface::preparePortDestruction() {
     internal::ConnectionManager::Connections connections = cmanager.getConnections();
     for (internal::ConnectionManager::Connections::const_iterator it = connections.begin(); it != connections.end(); ++it) {
         internal::LocalConnID* id = dynamic_cast<internal::LocalConnID*>(boost::get<0>(*it).get());
+        if (auto shared = dynamic_cast<internal::SharedConnID*>(boost::get<0>(*it).get())) {
+            auto peers = shared->connection->getEndpointPorts(true);
+            const auto inputs = shared->connection->getEndpointPorts(false);
+            peers.insert(peers.end(), inputs.begin(), inputs.end());
+            for (auto* port : peers) {
+                TaskContext* owner = port && port->getInterface() ? port->getInterface()->getOwner() : 0;
+                if (owner && owner->base::TaskCore::isRunning()) owner->stop();
+            }
+        }
         TaskContext* peer = id && id->ptr && id->ptr->getInterface() ? id->ptr->getInterface()->getOwner() : 0;
         if (peer && peer->base::TaskCore::isRunning()) peer->stop();
     }

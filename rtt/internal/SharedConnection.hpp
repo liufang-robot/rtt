@@ -182,6 +182,12 @@ namespace internal {
             return mstorage->read(sample, copy_old_data);
         }
 
+        virtual FlowStatus readWithCursor(reference_t sample, ChannelReadCursor& cursor,
+                                          bool copy_old_data = true)
+        {
+            return mstorage->readWithCursor(sample, cursor, copy_old_data);
+        }
+
         /**
          * Resets the stored sample. After clear() has been called, read()
          * returns false

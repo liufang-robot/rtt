@@ -53,8 +53,6 @@
 
 #include "../base/DataObject.hpp"
 #include "../base/DataObjectUnSync.hpp"
-#include "../base/Buffer.hpp"
-#include "../base/BufferUnSync.hpp"
 #include "../Logger.hpp"
 
 #include "../rtt-config.h"
@@ -91,8 +89,6 @@ namespace RTT
         switch (type) {
             case ConnPolicy::UNBUFFERED: return "UNBUFFERED";
             case ConnPolicy::DATA: return "DATA";
-            case ConnPolicy::BUFFER: return "BUFFER";
-            case ConnPolicy::CIRCULAR_BUFFER: return "CIRCULAR_BUFFER";
             default: return "(unknown type)";
         }
     }
@@ -244,29 +240,6 @@ namespace RTT
                 }
                 return new ChannelDataElement<T>(data_object, policy);
             }
-            else if (policy.type == ConnPolicy::BUFFER || policy.type == ConnPolicy::CIRCULAR_BUFFER)
-            {
-                typename base::BufferInterface<T>::shared_ptr buffer_object;
-                switch (policy.lock_policy)
-                {
-#ifndef OROBLD_OS_NO_ASM
-                case ConnPolicy::LOCK_FREE:
-                    buffer_object.reset(new base::BufferLockFree<T>(policy.size, initial_value, policy));
-                    break;
-#else
-                case ConnPolicy::LOCK_FREE:
-                    Logger::log().logf(Logger::Warning, "ConnFactory",
-                                       "lock free connection policy is unavailable on this system, defaulting to LOCKED");
-#endif
-                case ConnPolicy::LOCKED:
-                    buffer_object.reset(new base::BufferLocked<T>(policy.size, initial_value, policy));
-                    break;
-                case ConnPolicy::UNSYNC:
-                    buffer_object.reset(new base::BufferUnSync<T>(policy.size, initial_value, policy));
-                    break;
-                }
-                return new ChannelBufferElement<T>(buffer_object, policy);
-            }
             return NULL;
         }
 
@@ -285,6 +258,7 @@ namespace RTT
         template<typename T>
         static base::ChannelElementBase::shared_ptr buildChannelInput(OutputPort<T>& port, ConnPolicy const& policy, bool force_unbuffered = false)
         {
+            if (policy.type != ConnPolicy::DATA && !(force_unbuffered && policy.type == ConnPolicy::UNBUFFERED)) return {};
             typename internal::ConnInputEndpoint<T>::shared_ptr endpoint = port.getEndpoint();
 
             // Note: PerInputPort implies PUSH and PerOutputPort implies PULL
@@ -366,6 +340,7 @@ namespace RTT
         template<typename T>
         static base::ChannelElementBase::shared_ptr buildChannelOutput(InputPort<T>& port, ConnPolicy const& policy, T const& initial_value = T() )
         {
+            if (policy.type != ConnPolicy::DATA) return {};
             typename internal::ConnOutputEndpoint<T>::shared_ptr endpoint = port.getEndpoint();
 
             // Note: PerInputPort implies PUSH and PerOutputPort implies PULL
@@ -455,6 +430,7 @@ namespace RTT
         template <typename T>
         static SharedConnectionBase::shared_ptr buildSharedConnection(OutputPort<T> *output_port, base::InputPortInterface *input_port, ConnPolicy const& policy)
         {
+            if (policy.type != ConnPolicy::DATA) return {};
             // try to find an existing shared connection first
             SharedConnectionBase::shared_ptr shared_connection;
 
@@ -521,6 +497,8 @@ namespace RTT
         template<typename T>
         static bool createConnection(OutputPort<T>& output_port, base::InputPortInterface& input_port, ConnPolicy const& policy)
         {
+            if (policy.type != ConnPolicy::DATA) return false;
+            if (!input_port.acceptsWholeConnection(&output_port)) return false;
             PortConnectionLock lock_output_port(&output_port);
             PortConnectionLock lock_input_port(&input_port);
 
@@ -605,6 +583,7 @@ namespace RTT
         template<class T>
         static bool createStream(OutputPort<T>& output_port, ConnPolicy const& policy)
         {
+            if (!policy.validType()) return false;
             PortConnectionLock lock_output_port(&output_port);
 
             std::unique_ptr<StreamConnID> sid(new StreamConnID(policy.name_id));
@@ -629,6 +608,7 @@ namespace RTT
         template<class T>
         static bool createStream(InputPort<T>& input_port, ConnPolicy const& policy)
         {
+            if (policy.type != ConnPolicy::DATA || !input_port.acceptsWholeConnection(0)) return false;
             PortConnectionLock lock_input_port(&input_port);
 
             std::unique_ptr<StreamConnID> sid(new StreamConnID(policy.name_id));
@@ -641,6 +621,9 @@ namespace RTT
             sid.release();
             return true;
         }
+
+        static bool validateSharedConnection(base::OutputPortInterface* output_port, base::InputPortInterface* input_port,
+                                             SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy);
 
         static bool createSharedConnection(base::OutputPortInterface* output_port, base::InputPortInterface* input_port, SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy);
 

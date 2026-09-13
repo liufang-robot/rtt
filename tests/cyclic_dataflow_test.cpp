@@ -296,15 +296,13 @@ BOOST_AUTO_TEST_CASE(service_removal_detaches_nested_mapping_endpoints_and_activ
     BOOST_REQUIRE(task.start()); step(task); task.stop();
 }
 
-BOOST_AUTO_TEST_CASE(queued_state_and_multiple_whole_writers_fail_finalization) {
+BOOST_AUTO_TEST_CASE(preexisting_multiple_whole_writers_fail_finalization) {
     TaskContext task("policy"); task.setActivity(new extras::SlaveActivity(0.01));
-    InputPort<double> destination("destination"); task.addPort(destination);
+    InputPort<double> destination("destination");
     OutputPort<double> first("first"), second("second");
-    BOOST_REQUIRE(first.createConnection(destination, ConnPolicy::buffer(4)));
-    BOOST_CHECK(!task.finalizeConnections()); BOOST_CHECK(!task.start());
-    first.disconnect();
     BOOST_REQUIRE(first.connectTo(&destination));
     BOOST_REQUIRE(second.connectTo(&destination));
+    task.addPort(destination);
     BOOST_CHECK(!task.finalizeConnections()); BOOST_CHECK(!task.start());
 }
 
@@ -415,6 +413,125 @@ BOOST_AUTO_TEST_CASE(whole_dynamic_sequence_members_follow_resized_values) {
     source.data().clear(); PortDataAccess::commit(source); step(task);
     BOOST_CHECK(destination.data().values.empty());
     task.stop();
+}
+
+BOOST_AUTO_TEST_CASE(non_data_policy_kinds_reject_connection_creation) {
+    for (int kind : {1, 2, 42, -2, ConnPolicy::UNBUFFERED}) {
+        OutputPort<double> source("source"); InputPort<double> input("input");
+        ConnPolicy policy = ConnPolicy::data(); policy.type = kind; policy.size = 3;
+        BOOST_CHECK(!source.createConnection(input, policy));
+        BOOST_CHECK(!source.connected()); BOOST_CHECK(!input.connected());
+        base::ChannelElementBase::shared_ptr storage(internal::ConnFactory::buildDataStorage<double>(policy));
+        BOOST_CHECK(!storage);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(owned_inputs_reject_second_whole_writer_including_shared_joins) {
+    for (bool shared : {false, true}) {
+        TaskContext task("single_writer"); InputPort<double> input("input"); task.addPort(input);
+        OutputPort<double> first("first"), second("second");
+        ConnPolicy policy = ConnPolicy::data(); if (shared) policy.buffer_policy = Shared;
+        BOOST_REQUIRE(first.createConnection(input, policy));
+        BOOST_CHECK(!second.createConnection(input, policy));
+        if (shared) BOOST_CHECK(!second.createConnection(first.getSharedConnection(), policy));
+        BOOST_CHECK_EQUAL(input.getSourceConnections().size(), 1u);
+        BOOST_CHECK(task.finalizeConnections());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(shared_input_can_attach_before_its_only_writer) {
+    ConnPolicy policy = ConnPolicy::data(); policy.buffer_policy = Shared;
+    TaskContext task("consumer"); InputPort<double> input("input"); task.addPort(input);
+    auto shared = internal::ConnFactory::buildSharedConnection<double>(0, &input, policy);
+    BOOST_REQUIRE(shared);
+    BOOST_REQUIRE(input.createConnection(shared, policy));
+    OutputPort<double> source("source");
+    BOOST_REQUIRE(source.createConnection(shared, policy));
+    BOOST_REQUIRE_EQUAL(input.getSourceConnections().size(), 1u);
+    BOOST_CHECK_EQUAL(input.getSourceConnections()[0].sourcePort, "source");
+    BOOST_CHECK(task.finalizeConnections());
+}
+
+BOOST_AUTO_TEST_CASE(owned_input_rejects_existing_shared_multiwriter_graph) {
+    ConnPolicy policy = ConnPolicy::data(); policy.buffer_policy = Shared;
+    OutputPort<double> first("first"), second("second"); InputPort<double> staging("staging");
+    BOOST_REQUIRE(first.createConnection(staging, policy));
+    BOOST_REQUIRE(second.createConnection(staging, policy));
+    TaskContext task("consumer"); InputPort<double> input("input"); task.addPort(input);
+    BOOST_CHECK(!input.createConnection(first.getSharedConnection(), policy));
+    // Registration can expose a graph assembled while the input was unowned.
+    task.addPort(staging);
+    BOOST_CHECK(!task.finalizeConnections());
+    BOOST_CHECK(!task.start());
+}
+
+BOOST_AUTO_TEST_CASE(advanced_whole_channel_addition_cannot_inject_a_second_writer) {
+    ConnPolicy policy = ConnPolicy::data();
+    TaskContext task("consumer"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> input("input"); task.addPort(input);
+    OutputPort<double> first("first"), second("second");
+    BOOST_REQUIRE(first.createConnection(input, policy));
+    BOOST_REQUIRE_EQUAL(PortDataAccess::publish(first, 1.0), WriteSuccess);
+    PortDataAccess::publish(second, 99.0);
+    auto channel = boost::get<1>(first.getManager()->getConnections().front());
+    BOOST_REQUIRE(task.start());
+    std::unique_ptr<internal::ConnID> id(input.getPortID());
+    BOOST_CHECK(!second.addConnection(id.get(), channel, policy));
+    if (second.getManager()->connected()) id.release();
+    step(task);
+    BOOST_CHECK_EQUAL(input.data(), 1.0);
+    BOOST_REQUIRE(task.stop());
+}
+
+BOOST_AUTO_TEST_CASE(rejected_remote_channel_handshake_preserves_the_existing_writer) {
+    TaskContext task("consumer");
+    InputPort<double> input("input"); task.addPort(input);
+    OutputPort<double> source("source");
+    const ConnPolicy policy = ConnPolicy::data();
+    BOOST_REQUIRE(source.createConnection(input, policy));
+    const auto channel = boost::get<1>(source.getManager()->getConnections().front());
+    // A remote handshake supplies no local port ID. Repeated rejection must
+    // release the temporary ID as well as retaining the established connection.
+    for (int attempt = 0; attempt != 4; ++attempt)
+        BOOST_CHECK(!input.getEndpoint()->channelReady(channel, policy, nullptr));
+    BOOST_REQUIRE_EQUAL(input.getSourceConnections().size(), 1u);
+    BOOST_CHECK_EQUAL(input.getSourceConnections()[0].sourcePort, "source");
+    BOOST_CHECK(source.connected());
+}
+
+BOOST_AUTO_TEST_CASE(advanced_shared_connection_addition_and_removal_preserve_running_graph) {
+    ConnPolicy policy = ConnPolicy::data(); policy.buffer_policy = Shared;
+    TaskContext task("consumer"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> input("input"); task.addPort(input);
+    OutputPort<double> first("first"), second("second");
+    BOOST_REQUIRE(first.createConnection(input, policy));
+    auto shared = first.getSharedConnection();
+    BOOST_REQUIRE(task.start());
+    std::unique_ptr<internal::ConnID> id(shared->getConnID());
+    BOOST_CHECK(!second.addConnection(id.get(), shared, policy));
+    if (second.getManager()->connected()) id.release();
+    std::unique_ptr<internal::ConnID> removal(shared->getConnID());
+    BOOST_CHECK(!input.removeConnection(removal.get()));
+    BOOST_CHECK(input.connected());
+    BOOST_REQUIRE(task.stop());
+}
+
+BOOST_AUTO_TEST_CASE(shared_connections_freeze_indirect_topology_of_running_components) {
+    ConnPolicy policy = ConnPolicy::data(); policy.buffer_policy = Shared;
+    TaskContext task("consumer"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> input("input"); task.addPort(input);
+    OutputPort<double> first("first"), second("second"); InputPort<double> extra("extra");
+    BOOST_REQUIRE(first.createConnection(input, policy));
+    const auto channel = first.getSharedConnection();
+    BOOST_REQUIRE(task.start());
+    BOOST_CHECK(!second.createConnection(channel, policy));
+    BOOST_CHECK(!extra.createConnection(channel, policy));
+    first.disconnect();
+    BOOST_CHECK(first.connected());
+    BOOST_REQUIRE(task.stop());
+    BOOST_CHECK(extra.createConnection(channel, policy));
+    first.disconnect();
+    BOOST_CHECK(!first.connected());
 }
 
 BOOST_AUTO_TEST_CASE(source_connections_describe_logical_whole_and_member_endpoints) {

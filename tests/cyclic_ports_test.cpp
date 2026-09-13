@@ -2,6 +2,7 @@
 #include <rtt/InputPort.hpp>
 #include <rtt/OutputPort.hpp>
 #include <rtt/TaskContext.hpp>
+#include <rtt/extras/SlaveActivity.hpp>
 #include <memory>
 #include <type_traits>
 #include <atomic>
@@ -224,4 +225,195 @@ BOOST_AUTO_TEST_CASE(slow_observers_cannot_suppress_component_delivery)
     BOOST_CHECK_EQUAL(committed, WriteSuccess);
     BOOST_CHECK_EQUAL(incoming, NewData);
     BOOST_CHECK_EQUAL(received.value, 4);
+}
+
+BOOST_AUTO_TEST_CASE(shared_state_fanout_refreshes_each_component_and_observer)
+{
+    for (BufferPolicy placement : {PerConnection, PerInputPort, PerOutputPort, Shared}) {
+        BOOST_TEST_CONTEXT("storage placement " << placement) {
+            TaskContext producer("producer"), first("first"), second("second");
+            producer.setActivity(new extras::SlaveActivity(0.01));
+            first.setActivity(new extras::SlaveActivity(0.01));
+            second.setActivity(new extras::SlaveActivity(0.01));
+            OutputPort<double> output("output");
+            InputPort<double> input_a("input"), input_b("input");
+            producer.addPort(output); first.addPort(input_a); second.addPort(input_b);
+            ConnPolicy policy = ConnPolicy::data(ConnPolicy::LOCKED, false);
+            policy.buffer_policy = placement;
+            BOOST_REQUIRE(output.connectTo(&input_a, policy));
+            BOOST_REQUIRE(output.connectTo(&input_b, policy));
+            internal::DataSource<double>::shared_ptr observer_a =
+                dynamic_cast<internal::DataSource<double>*>(input_a.getDataSource());
+            internal::DataSource<double>::shared_ptr observer_b =
+                dynamic_cast<internal::DataSource<double>*>(input_b.getDataSource());
+            BOOST_REQUIRE(producer.start());
+            BOOST_REQUIRE(first.start());
+            BOOST_REQUIRE(second.start());
+            auto step = [](TaskContext& task) {
+                return static_cast<extras::SlaveActivity*>(task.getActivity())->execute();
+            };
+            for (double sample : {17.0, 29.0, 29.0}) {
+                output.data() = sample;
+                BOOST_REQUIRE(step(producer));
+                BOOST_REQUIRE(step(first));
+                BOOST_REQUIRE(step(second));
+                BOOST_CHECK_EQUAL(input_a.data(), sample);
+                BOOST_CHECK_EQUAL(input_b.data(), sample);
+                BOOST_CHECK_EQUAL(input_a.status(), NewData);
+                BOOST_CHECK_EQUAL(input_b.status(), NewData);
+                BOOST_CHECK(observer_a->evaluate());
+                BOOST_CHECK(observer_b->evaluate());
+                BOOST_CHECK_EQUAL(observer_a->value(), sample);
+                BOOST_CHECK_EQUAL(observer_b->value(), sample);
+                BOOST_REQUIRE(step(first));
+                BOOST_REQUIRE(step(second));
+                BOOST_CHECK_EQUAL(input_a.status(), OldData);
+                BOOST_CHECK_EQUAL(input_b.status(), OldData);
+                BOOST_CHECK(!observer_a->evaluate());
+                BOOST_CHECK(!observer_b->evaluate());
+            }
+            second.stop(); first.stop(); producer.stop();
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(shared_input_join_rejects_a_different_sample_type)
+{
+    OutputPort<double> output("output");
+    InputPort<double> staging("staging");
+    InputPort<int> input("input");
+    ConnPolicy policy = ConnPolicy::data();
+    policy.buffer_policy = Shared;
+    BOOST_REQUIRE(output.createConnection(staging, policy));
+    BOOST_CHECK(!input.createConnection(output.getSharedConnection(), policy));
+    BOOST_CHECK(!input.connected());
+    BOOST_CHECK(input.getSourceConnections().empty());
+    std::unique_ptr<internal::ConnID> id(output.getSharedConnection()->getConnID());
+    const bool registered = input.addConnection(id.get(), output.getSharedConnection(), policy);
+    if (registered) id.release();
+    BOOST_CHECK(!registered);
+    BOOST_CHECK(!input.getManager()->connected());
+}
+
+BOOST_AUTO_TEST_CASE(shared_readers_detect_republication_after_clear_and_reconnection)
+{
+    for (int locking : {ConnPolicy::LOCK_FREE, ConnPolicy::LOCKED, ConnPolicy::UNSYNC}) {
+        for (BufferPolicy placement : {PerOutputPort, Shared}) {
+            BOOST_TEST_CONTEXT("locking " << locking << ", storage " << placement) {
+                ConnPolicy policy = ConnPolicy::data(locking, false);
+                policy.buffer_policy = placement;
+                OutputPort<double> output("output"), replacement("replacement");
+                InputPort<double> first("first"), second("second");
+                BOOST_REQUIRE(output.createConnection(first, policy));
+                BOOST_REQUIRE(output.createConnection(second, policy));
+                output.data() = 5;
+                internal::PortDataAccess::commit(output);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(second), NewData);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), NewData);
+                BOOST_CHECK_EQUAL(first.data(), 5);
+                first.clear();
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), NoData);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(second), NoData);
+                internal::PortDataAccess::commit(output);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), NewData);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(second), NewData);
+                BOOST_CHECK_EQUAL(second.data(), 5);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(second), OldData);
+                first.disconnect();
+                second.disconnect();
+                replacement.data() = 9;
+                BOOST_REQUIRE(replacement.createConnection(first, policy));
+                BOOST_REQUIRE(replacement.createConnection(second, policy));
+                internal::PortDataAccess::commit(replacement);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(second), NewData);
+                BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), NewData);
+                BOOST_CHECK_EQUAL(first.data(), 9);
+                BOOST_CHECK_EQUAL(second.data(), 9);
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(stalled_shared_reader_does_not_skip_a_concurrent_publication)
+{
+    if (!types::Types()->type("observed_sample"))
+        types::Types()->addType(new types::TemplateTypeInfo<ObservedSample, false>("observed_sample"));
+    for (BufferPolicy placement : {PerOutputPort, Shared}) {
+        OutputPort<ObservedSample> output("output");
+        InputPort<ObservedSample> first("first"), second("second");
+        ConnPolicy policy = ConnPolicy::data(ConnPolicy::LOCK_FREE, false);
+        policy.buffer_policy = placement;
+        BOOST_REQUIRE(output.createConnection(first, policy));
+        BOOST_REQUIRE(output.createConnection(second, policy));
+        output.data().value = 5;
+        BOOST_REQUIRE_EQUAL(internal::PortDataAccess::commit(output), WriteSuccess);
+        {
+            std::lock_guard<std::mutex> lock(observer_gate);
+            observers_entered = 0;
+            observers_released = false;
+        }
+        FlowStatus initial = NoData;
+        std::thread reader([&] {
+            slow_observer = true;
+            initial = internal::PortDataAccess::refresh(first);
+        });
+        bool entered;
+        {
+            std::unique_lock<std::mutex> lock(observer_gate);
+            entered = observer_changed.wait_for(lock, std::chrono::seconds(2), [] { return observers_entered != 0; });
+        }
+        WriteStatus written = WriteFailure;
+        FlowStatus second_status = NoData;
+        if (entered) {
+            for (int value = 6; value <= 37; ++value) {
+                output.data().value = value;
+                written = internal::PortDataAccess::commit(output);
+            }
+            second_status = internal::PortDataAccess::refresh(second);
+        }
+        {
+            std::lock_guard<std::mutex> lock(observer_gate);
+            observers_released = true;
+            observer_changed.notify_all();
+        }
+        reader.join();
+        BOOST_REQUIRE(entered);
+        BOOST_CHECK_EQUAL(initial, NewData);
+        BOOST_CHECK_EQUAL(written, WriteSuccess);
+        BOOST_CHECK_EQUAL(second_status, NewData);
+        BOOST_CHECK_EQUAL(second.data().value, 37);
+        BOOST_CHECK_EQUAL(first.data().value, 5);
+        BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), NewData);
+        BOOST_CHECK_EQUAL(first.data().value, 37);
+        BOOST_CHECK_EQUAL(internal::PortDataAccess::refresh(first), OldData);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(reconnecting_a_shared_reader_releases_old_storage_before_the_cycle)
+{
+    struct TrackedStorage : internal::ChannelDataElement<double> {
+        bool& destroyed;
+        TrackedStorage(bool& destroyed, const ConnPolicy& policy)
+            : internal::ChannelDataElement<double>(
+                  base::DataObjectInterface<double>::shared_ptr(new base::DataObjectLocked<double>(0)), policy),
+              destroyed(destroyed) {}
+        ~TrackedStorage() { destroyed = true; }
+    };
+    bool destroyed = false;
+    ConnPolicy policy = ConnPolicy::data(ConnPolicy::LOCKED, false);
+    policy.buffer_policy = Shared;
+    internal::SharedConnectionBase::shared_ptr shared(
+        new internal::SharedConnection<double>(new TrackedStorage(destroyed, policy), policy));
+    OutputPort<double> output("output"), replacement("replacement");
+    InputPort<double> input("input");
+    BOOST_REQUIRE(input.createConnection(shared, policy));
+    BOOST_REQUIRE(output.createConnection(shared, policy));
+    output.data() = 5;
+    internal::PortDataAccess::commit(output);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::refresh(input), NewData);
+    input.disconnect();
+    output.disconnect();
+    shared.reset();
+    BOOST_REQUIRE(replacement.createConnection(input, policy));
+    BOOST_CHECK(destroyed);
 }

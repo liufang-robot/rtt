@@ -79,6 +79,21 @@ InputPortInterface::~InputPortInterface()
 ConnPolicy InputPortInterface::getDefaultPolicy() const
 { return default_policy; }
 
+bool InputPortInterface::acceptsWholeConnection(const OutputPortInterface* source) const
+{
+    if (hasMemberConnections()) return false;
+    if (!iface || !iface->getOwner()) return true;
+    const auto connections = cmanager.getConnections();
+    if (connections.empty()) return true;
+    if (!source || connections.size() != 1) return false;
+    const auto* id = boost::get<0>(connections.front()).get();
+    if (auto local = dynamic_cast<const internal::LocalConnID*>(id)) return local->ptr == source;
+    if (auto shared = dynamic_cast<const internal::SharedConnID*>(id))
+        return shared->connection == source->getSharedConnection() &&
+            shared->connection->getEndpointPorts(true).size() == 1;
+    return false;
+}
+
 namespace {
 // Shared channels may have several producers. getInput() alone would select
 // only the last signalling branch and would report a misleading source.
@@ -163,7 +178,10 @@ bool InputPortInterface::connectTo(PortInterface* other)
 
 bool InputPortInterface::addConnection(ConnID* cid, ChannelElementBase::shared_ptr channel, const ConnPolicy& policy)
 {
-    if (!prepareConnectionChange()) return false;
+    if (policy.type != ConnPolicy::DATA || !prepareConnectionChange()) return false;
+    if (iface && iface->getOwner() && cmanager.connected()) return false;
+    if (auto shared = boost::dynamic_pointer_cast<internal::SharedConnectionBase>(channel))
+        if (!internal::ConnFactory::validateSharedConnection(0, this, shared, policy)) return false;
     return cmanager.addConnection( cid, channel, policy);
 }
 
