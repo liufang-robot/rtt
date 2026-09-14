@@ -18,6 +18,8 @@
 namespace {
 thread_local bool countCycleAllocations = false;
 thread_local std::size_t cycleAllocations = 0;
+thread_local bool countSourceCopies = false;
+thread_local std::size_t sourceCopies = 0;
 }
 void* operator new(std::size_t size) {
     if (countCycleAllocations) ++cycleAllocations;
@@ -59,6 +61,22 @@ struct SequenceFrame {
     std::vector<double> values;
     template<class Archive> void serialize(Archive& ar, unsigned int) { ar & BOOST_SERIALIZATION_NVP(values); }
 };
+struct CopyCountedFrame {
+    double positive = 0;
+    double negative = 0;
+    double payload[64] = {};
+    CopyCountedFrame& operator=(const CopyCountedFrame& other) {
+        if (countSourceCopies) ++sourceCopies;
+        positive = other.positive;
+        negative = other.negative;
+        for (std::size_t i = 0; i != 64; ++i) payload[i] = other.payload[i];
+        return *this;
+    }
+    template<class Archive> void serialize(Archive& ar, unsigned int) {
+        ar & BOOST_SERIALIZATION_NVP(positive) & BOOST_SERIALIZATION_NVP(negative)
+           & boost::serialization::make_nvp("payload", boost::serialization::make_array(payload, 64));
+    }
+};
 struct TypesFixture {
     TypesFixture() {
         if (!types::Types()->type("cyclic_axis")) {
@@ -67,6 +85,7 @@ struct TypesFixture {
             types::Types()->addType(new types::StructTypeInfo<Frame, false>("cyclic_frame"));
             types::Types()->addType(new types::StructTypeInfo<ShortFrame, false>("cyclic_short"));
             types::Types()->addType(new types::StructTypeInfo<SequenceFrame, false>("cyclic_sequence_frame"));
+            types::Types()->addType(new types::StructTypeInfo<CopyCountedFrame, false>("cyclic_copy_counted_frame"));
         }
     }
 };
@@ -350,6 +369,260 @@ BOOST_AUTO_TEST_CASE(shared_source_snapshot_keeps_concurrent_related_fields_cohe
     producer.join();
     BOOST_CHECK(coherent);
     task.stop();
+}
+
+BOOST_AUTO_TEST_CASE(member_fanout_source_copy_cost_is_independent_of_destination_count) {
+    std::size_t singlePublishCopies = 0, singleAcquireCopies = 0;
+    for (const std::size_t destinationCount : {std::size_t(1), std::size_t(16)}) {
+        TaskContext task("fanout"); task.setActivity(new extras::SlaveActivity(0.01));
+        OutputPort<CopyCountedFrame> source("source");
+        std::vector<std::unique_ptr<InputPort<double>>> inputs;
+        for (std::size_t i = 0; i != destinationCount; ++i) {
+            inputs.emplace_back(new InputPort<double>("input_" + std::to_string(i)));
+            auto service = i % 2 ? task.provides("io")->provides("nested") : task.provides();
+            service->addPort(*inputs.back());
+            BOOST_REQUIRE(connectMembers(source, i % 2 ? "negative" : "positive", *inputs.back(), ""));
+        }
+        BOOST_REQUIRE(task.start());
+        source.data().positive = 1; source.data().negative = -1;
+        BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+        step(task);
+
+        source.data().positive = 23; source.data().negative = -23;
+        sourceCopies = 0;
+        countSourceCopies = true;
+        const auto publication = PortDataAccess::commit(source);
+        countSourceCopies = false;
+        const auto publicationCopies = sourceCopies;
+        sourceCopies = 0;
+        countSourceCopies = true;
+        step(task);
+        countSourceCopies = false;
+        const auto acquisitionCopies = sourceCopies;
+        BOOST_REQUIRE_EQUAL(publication, WriteSuccess);
+        for (std::size_t i = 0; i != inputs.size(); ++i) {
+            BOOST_CHECK_EQUAL(inputs[i]->data(), i % 2 ? -23.0 : 23.0);
+            BOOST_CHECK_EQUAL(inputs[i]->status(), NewData);
+        }
+        if (destinationCount == 1) {
+            singlePublishCopies = publicationCopies;
+            singleAcquireCopies = acquisitionCopies;
+            BOOST_CHECK_GT(singlePublishCopies, 0u);
+            BOOST_CHECK_GT(singleAcquireCopies, 0u);
+            // Acquiring the source must not also copy it into an unused staging snapshot.
+            BOOST_CHECK_LE(singleAcquireCopies, 1u);
+        } else {
+            // More selected destinations must add scalar assignments, not full-frame copies.
+            BOOST_CHECK_EQUAL(publicationCopies, singlePublishCopies);
+            BOOST_CHECK_EQUAL(acquisitionCopies, singleAcquireCopies);
+        }
+        sourceCopies = 0;
+        countSourceCopies = true;
+        step(task);
+        countSourceCopies = false;
+        BOOST_CHECK_EQUAL(sourceCopies, 0u);
+        for (const auto& input : inputs) BOOST_CHECK_EQUAL(input->status(), OldData);
+        BOOST_REQUIRE(task.stop());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(shared_source_acquisition_keeps_distinct_input_ports_coherent) {
+    TaskContext task("concurrent_fanout"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> position("position"), velocity("velocity"), nestedPosition("position"), nestedVelocity("velocity");
+    task.addPort(position); task.addPort(velocity);
+    auto nested = task.provides("io")->provides("nested");
+    nested->addPort(nestedPosition); nested->addPort(nestedVelocity);
+    OutputPort<Frame> source("source");
+    BOOST_REQUIRE(connectMembers(source, "axis.position", position, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.velocity", velocity, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.position", nestedPosition, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.velocity", nestedVelocity, ""));
+    BOOST_REQUIRE(task.start());
+    std::atomic<bool> done(false);
+    std::thread producer([&] {
+        Frame value;
+        for (int i = 1; i <= 20000; ++i) {
+            value.axis.position = i; value.axis.velocity = -i;
+            PortDataAccess::publish(source, value);
+        }
+        done.store(true);
+    });
+    bool coherent = true, consistentStatus = true;
+    do {
+        step(task);
+        coherent = coherent && position.data() == -velocity.data()
+            && position.data() == nestedPosition.data() && velocity.data() == nestedVelocity.data();
+        consistentStatus = consistentStatus && position.status() == velocity.status()
+            && position.status() == nestedPosition.status() && velocity.status() == nestedVelocity.status();
+    } while (!done.load());
+    producer.join();
+    step(task);
+    BOOST_CHECK(coherent);
+    BOOST_CHECK(consistentStatus);
+    BOOST_CHECK_EQUAL(position.data(), 20000.0);
+    BOOST_CHECK_EQUAL(velocity.data(), -20000.0);
+    BOOST_CHECK_EQUAL(nestedPosition.data(), 20000.0);
+    BOOST_CHECK_EQUAL(nestedVelocity.data(), -20000.0);
+    step(task);
+    BOOST_CHECK_EQUAL(position.status(), OldData);
+    BOOST_CHECK_EQUAL(nestedVelocity.status(), OldData);
+    BOOST_REQUIRE(task.stop());
+}
+
+BOOST_AUTO_TEST_CASE(shared_source_fanout_survives_partial_disconnect_and_endpoint_destruction) {
+    TaskContext task("fanout_lifetime"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> first("first"), remaining("remaining");
+    std::unique_ptr<InputPort<double>> temporary(new InputPort<double>("temporary"));
+    std::unique_ptr<OutputPort<Frame>> source(new OutputPort<Frame>("source"));
+    task.addPort(first); task.addPort(remaining);
+    auto nested = task.provides("io"); nested->addPort(*temporary);
+    BOOST_REQUIRE(connectMembers(*source, "axis.position", first, ""));
+    BOOST_REQUIRE(connectMembers(*source, "axis.velocity", remaining, ""));
+    BOOST_REQUIRE(connectMembers(*source, "axis.velocity", *temporary, ""));
+    source->data().axis.position = 4; source->data().axis.velocity = -4;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(*source), WriteSuccess);
+    BOOST_REQUIRE(task.start()); step(task); BOOST_REQUIRE(task.stop());
+    first.disconnect();
+    BOOST_CHECK(!first.connected());
+    BOOST_CHECK(first.getSourceConnections().empty());
+    BOOST_CHECK(source->connectedTo(&remaining));
+    BOOST_CHECK(source->connectedTo(temporary.get()));
+    source->data().axis.position = 5; source->data().axis.velocity = -5;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(*source), WriteSuccess);
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(first.data(), 4.0);
+    BOOST_CHECK_EQUAL(first.status(), NoData);
+    BOOST_CHECK_EQUAL(remaining.data(), -5.0);
+    BOOST_CHECK_EQUAL(temporary->data(), -5.0);
+    BOOST_REQUIRE(task.stop());
+
+    BOOST_REQUIRE(connectMembers(*source, "axis.position", first, ""));
+    BOOST_REQUIRE(task.start());
+    temporary.reset();
+    BOOST_CHECK(!task.isRunning());
+    BOOST_CHECK(nested->getPort("temporary") == nullptr);
+    BOOST_CHECK(source->connectedTo(&first));
+    BOOST_CHECK(source->connectedTo(&remaining));
+    source->data().axis.position = 7; source->data().axis.velocity = -7;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(*source), WriteSuccess);
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(first.data(), 7.0);
+    BOOST_CHECK_EQUAL(remaining.data(), -7.0);
+
+    source.reset();
+    BOOST_CHECK(!task.isRunning());
+    BOOST_CHECK(!first.connected()); BOOST_CHECK(!remaining.connected());
+    BOOST_CHECK(first.getSourceConnections().empty());
+    BOOST_CHECK(remaining.getSourceConnections().empty());
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(first.data(), 7.0);
+    BOOST_CHECK_EQUAL(remaining.data(), -7.0);
+    BOOST_CHECK_EQUAL(first.status(), NoData);
+    BOOST_CHECK_EQUAL(remaining.status(), NoData);
+    BOOST_REQUIRE(task.stop());
+}
+
+BOOST_AUTO_TEST_CASE(shared_source_fanout_consumers_acquire_independent_cycles) {
+    TaskContext first("first_consumer"), second("second_consumer");
+    first.setActivity(new extras::SlaveActivity(0.01)); second.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> firstPosition("position"), firstVelocity("velocity"), secondPosition("position"), secondVelocity("velocity");
+    first.addPort(firstPosition); first.provides("io")->addPort(firstVelocity);
+    second.addPort(secondPosition); second.provides("io")->addPort(secondVelocity);
+    OutputPort<Frame> source("source");
+    BOOST_REQUIRE(connectMembers(source, "axis.position", firstPosition, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.velocity", firstVelocity, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.position", secondPosition, ""));
+    BOOST_REQUIRE(connectMembers(source, "axis.velocity", secondVelocity, ""));
+    BOOST_REQUIRE(first.start()); BOOST_REQUIRE(second.start());
+    source.data().axis.position = 1; source.data().axis.velocity = -1;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+    step(first);
+    BOOST_CHECK_EQUAL(firstPosition.data(), 1.0); BOOST_CHECK_EQUAL(firstVelocity.data(), -1.0);
+    BOOST_CHECK_EQUAL(firstPosition.status(), NewData); BOOST_CHECK_EQUAL(firstVelocity.status(), NewData);
+    BOOST_CHECK_EQUAL(secondPosition.status(), NoData); BOOST_CHECK_EQUAL(secondVelocity.status(), NoData);
+    step(first);
+    BOOST_CHECK_EQUAL(firstPosition.status(), OldData); BOOST_CHECK_EQUAL(firstVelocity.status(), OldData);
+    source.data().axis.position = 2; source.data().axis.velocity = -2;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+    step(second);
+    BOOST_CHECK_EQUAL(secondPosition.data(), 2.0); BOOST_CHECK_EQUAL(secondVelocity.data(), -2.0);
+    BOOST_CHECK_EQUAL(secondPosition.status(), NewData); BOOST_CHECK_EQUAL(secondVelocity.status(), NewData);
+    BOOST_CHECK_EQUAL(firstPosition.data(), 1.0); BOOST_CHECK_EQUAL(firstVelocity.data(), -1.0);
+    step(second);
+    BOOST_CHECK_EQUAL(secondPosition.status(), OldData); BOOST_CHECK_EQUAL(secondVelocity.status(), OldData);
+    step(first);
+    BOOST_CHECK_EQUAL(firstPosition.data(), 2.0); BOOST_CHECK_EQUAL(firstVelocity.data(), -2.0);
+    BOOST_CHECK_EQUAL(firstPosition.status(), NewData); BOOST_CHECK_EQUAL(firstVelocity.status(), NewData);
+    BOOST_REQUIRE(first.stop()); BOOST_REQUIRE(second.stop());
+}
+
+BOOST_AUTO_TEST_CASE(shared_source_new_destinations_join_pending_publications_without_replaying_consumed_data) {
+    TaskContext task("joining_consumer"); task.setActivity(new extras::SlaveActivity(0.01));
+    InputPort<double> first("first"), second("second"), third("third");
+    task.addPort(first); task.provides("io")->addPort(second); task.addPort(third);
+    third.setDataSample(99.0);
+    OutputPort<Frame> source("source");
+    BOOST_REQUIRE(connectMembers(source, "axis.position", first, ""));
+    source.data().axis.position = 42;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+    BOOST_REQUIRE(connectMembers(source, "axis.position", second, ""));
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(first.data(), 42.0); BOOST_CHECK_EQUAL(second.data(), 42.0);
+    BOOST_CHECK_EQUAL(first.status(), NewData); BOOST_CHECK_EQUAL(second.status(), NewData);
+    BOOST_REQUIRE(task.stop());
+
+    BOOST_REQUIRE(connectMembers(source, "axis.position", third, ""));
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(first.data(), 42.0); BOOST_CHECK_EQUAL(second.data(), 42.0);
+    BOOST_CHECK_EQUAL(first.status(), OldData); BOOST_CHECK_EQUAL(second.status(), OldData);
+    BOOST_CHECK_EQUAL(third.data(), 99.0); BOOST_CHECK_EQUAL(third.status(), NoData);
+    BOOST_REQUIRE(task.stop());
+
+    InputPort<double> invalid("invalid"); task.addPort(invalid);
+    source.data().axis.position = 43;
+    BOOST_REQUIRE_EQUAL(PortDataAccess::commit(source), WriteSuccess);
+    BOOST_CHECK(!connectMembers(source, "axis.missing", invalid, ""));
+    BOOST_CHECK(!invalid.connected());
+    BOOST_REQUIRE(task.start()); step(task);
+    for (auto* input : {&first, &second, &third}) {
+        BOOST_CHECK_EQUAL(input->data(), 43.0);
+        BOOST_CHECK_EQUAL(input->status(), NewData);
+    }
+    BOOST_REQUIRE(task.stop());
+    first.disconnect(); second.disconnect(); third.disconnect();
+    BOOST_CHECK(!source.connected());
+    BOOST_CHECK(first.getSourceConnections().empty());
+    BOOST_CHECK(second.getSourceConnections().empty());
+    BOOST_CHECK(third.getSourceConnections().empty());
+}
+
+BOOST_AUTO_TEST_CASE(shared_source_feedback_observes_the_previous_owner_cycle) {
+    class Feedback : public TaskContext {
+    public:
+        OutputPort<Frame> output{"output"};
+        InputPort<double> position{"position"}, velocity{"velocity"};
+        Feedback() : TaskContext("feedback") {
+            setActivity(new extras::SlaveActivity(0.01));
+            addPort(output); addPort(position); provides("io")->addPort(velocity);
+        }
+        void updateHook() override {
+            output.data().axis.position = position.data() + 1;
+            output.data().axis.velocity = velocity.data() - 1;
+        }
+    } task;
+    BOOST_REQUIRE(connectMembers(task.output, "axis.position", task.position, ""));
+    BOOST_REQUIRE(connectMembers(task.output, "axis.velocity", task.velocity, ""));
+    BOOST_REQUIRE(task.start()); step(task);
+    BOOST_CHECK_EQUAL(task.position.status(), NoData); BOOST_CHECK_EQUAL(task.velocity.status(), NoData);
+    BOOST_CHECK_EQUAL(task.position.data(), 0.0); BOOST_CHECK_EQUAL(task.velocity.data(), 0.0);
+    BOOST_CHECK_EQUAL(task.output.data().axis.position, 1.0);
+    step(task);
+    BOOST_CHECK_EQUAL(task.position.status(), NewData); BOOST_CHECK_EQUAL(task.velocity.status(), NewData);
+    BOOST_CHECK_EQUAL(task.position.data(), 1.0); BOOST_CHECK_EQUAL(task.velocity.data(), -1.0);
+    BOOST_CHECK_EQUAL(task.output.data().axis.position, 2.0);
+    step(task);
+    BOOST_CHECK_EQUAL(task.position.data(), 2.0); BOOST_CHECK_EQUAL(task.velocity.data(), -2.0);
+    BOOST_REQUIRE(task.stop());
 }
 
 BOOST_AUTO_TEST_CASE(parameterless_disconnect_rejects_a_running_source_endpoint) {

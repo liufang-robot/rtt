@@ -184,10 +184,14 @@ struct CyclicDataFlow::Impl {
         Path destinationPath;
         std::vector<Assignment> assignments;
     };
+    struct Acquisition {
+        boost::shared_ptr<base::InputPortInterface> input;
+        FlowStatus current = NoData;
+    };
     struct Subscription {
         base::OutputPortInterface* source;
         base::InputPortInterface* destination;
-        boost::shared_ptr<base::InputPortInterface> input;
+        boost::shared_ptr<Acquisition> acquisition;
         std::vector<Mapping> mappings;
         bool received = false;
     };
@@ -199,6 +203,9 @@ struct CyclicDataFlow::Impl {
     CyclicDataFlow& self;
     std::atomic<bool> prepared{false};
     std::vector<boost::shared_ptr<Subscription> > subscriptions;
+    // Subscriptions own acquisitions. Prepared pointers never prolong a
+    // channel's lifetime after its last logical destination is disconnected.
+    std::vector<Acquisition*> acquisitions;
     std::vector<base::InputPortInterface*> inputs;
     std::vector<base::OutputPortInterface*> outputs;
     std::vector<Assembly> assemblies;
@@ -253,34 +260,44 @@ bool CyclicDataFlow::connect(base::OutputPortInterface& source, const std::strin
     if (!parse(sourcePath, from) || !parse(destinationPath, to)) return false;
     if (destination.getManager()->connected()) return false;
     boost::shared_ptr<Impl::Subscription> subscription;
+    boost::shared_ptr<Impl::Acquisition> acquisition;
     for (size_t i = 0; i < impl->subscriptions.size(); ++i) {
         Impl::Subscription& existing = *impl->subscriptions[i];
+        if (existing.source == &source) acquisition = existing.acquisition;
         if (existing.destination != &destination) continue;
         for (size_t j = 0; j < existing.mappings.size(); ++j)
             if (overlaps(existing.mappings[j].destinationPath, to)) return false;
         if (existing.source == &source) subscription = impl->subscriptions[i];
     }
     bool isNew = !subscription;
+    bool newAcquisition = !acquisition;
     if (isNew) {
         subscription.reset(new Impl::Subscription());
         subscription->source = &source; subscription->destination = &destination;
-        subscription->input.reset(dynamic_cast<base::InputPortInterface*>(source.antiClone()));
-        if (!subscription->input) return false;
-        // Source-typed storage is sized once before any member handles are bound.
-        if (!PortDataAccess::image(*subscription->input)->update(PortDataAccess::image(source).get())) return false;
+        if (newAcquisition) {
+            acquisition.reset(new Impl::Acquisition());
+            acquisition->input.reset(dynamic_cast<base::InputPortInterface*>(source.antiClone()));
+            if (!acquisition->input) return false;
+            // Private acquisition images have no external observers. Only the
+            // real destination images publish observation snapshots.
+            PortDataAccess::discardSnapshot(*acquisition->input);
+            // Size source storage once before binding any member handles.
+            if (!PortDataAccess::image(*acquisition->input)->update(PortDataAccess::image(source).get())) return false;
+        }
+        subscription->acquisition = acquisition;
     }
     Impl::Mapping mapping;
     mapping.sourcePath = from;
     mapping.destinationPath = to;
     try {
-        if (!bind(select(PortDataAccess::image(*subscription->input), from),
+        if (!bind(select(PortDataAccess::image(*acquisition->input), from),
                   select(PortDataAccess::image(destination), to), mapping.assignments)) return false;
     } catch (const std::exception&) { return false; }
-    if (isNew) {
+    if (newAcquisition) {
         ConnPolicy policy = ConnPolicy::data(); policy.init = false;
-        if (!source.createConnection(*subscription->input, policy)) return false;
-        impl->subscriptions.push_back(subscription);
+        if (!source.createConnection(*acquisition->input, policy)) return false;
     }
+    if (isNew) impl->subscriptions.push_back(subscription);
     subscription->mappings.push_back(mapping);
     impl->watch(source); impl->watch(destination);
     invalidate();
@@ -290,19 +307,24 @@ bool CyclicDataFlow::connect(base::OutputPortInterface& source, const std::strin
 bool CyclicDataFlow::finalize() {
     if (owner().base::TaskCore::isRunning()) return false;
     invalidate();
-    impl->inputs.clear(); impl->outputs.clear(); impl->assemblies.clear();
+    impl->inputs.clear(); impl->outputs.clear(); impl->assemblies.clear(); impl->acquisitions.clear();
     impl->unwatch();
     for (size_t i = 0; i < impl->subscriptions.size(); ++i) {
         Impl::Subscription& subscription = *impl->subscriptions[i];
+        Impl::Acquisition& acquisition = *subscription.acquisition;
         impl->watch(*subscription.source); impl->watch(*subscription.destination);
         try {
-            TaskContext* sourceOwner = subscription.source->getInterface() ? subscription.source->getInterface()->getOwner() : 0;
-            if ((!sourceOwner || !sourceOwner->base::TaskCore::isRunning()) &&
-                !PortDataAccess::image(*subscription.input)->update(PortDataAccess::image(*subscription.source).get())) return false;
+            if (std::find(impl->acquisitions.begin(), impl->acquisitions.end(), &acquisition) == impl->acquisitions.end()) {
+                TaskContext* sourceOwner = subscription.source->getInterface() ? subscription.source->getInterface()->getOwner() : 0;
+                if ((!sourceOwner || !sourceOwner->base::TaskCore::isRunning()) &&
+                    !PortDataAccess::image(*acquisition.input)->update(PortDataAccess::image(*subscription.source).get())) return false;
+                acquisition.current = NoData;
+                impl->acquisitions.push_back(&acquisition);
+            }
             for (size_t m = 0; m < subscription.mappings.size(); ++m) {
                 Impl::Mapping& mapping = subscription.mappings[m];
                 std::vector<Assignment> assignments;
-                if (!bind(select(PortDataAccess::image(*subscription.input), mapping.sourcePath),
+                if (!bind(select(PortDataAccess::image(*acquisition.input), mapping.sourcePath),
                           select(PortDataAccess::image(*subscription.destination), mapping.destinationPath), assignments)) return false;
                 mapping.assignments.swap(assignments);
             }
@@ -337,12 +359,16 @@ bool CyclicDataFlow::finalize() {
 bool CyclicDataFlow::refresh() {
     if (!valid()) return false;
     for (size_t i = 0; i < impl->inputs.size(); ++i) PortDataAccess::refresh(*impl->inputs[i]);
+    // All member destinations in this owner use one acquired sample per source,
+    // even if the source publishes again while the assignments are executing.
+    for (auto* acquisition : impl->acquisitions)
+        acquisition->current = PortDataAccess::refresh(*acquisition->input);
     for (size_t i = 0; i < impl->assemblies.size(); ++i) {
         Impl::Assembly& assembly = impl->assemblies[i];
         FlowStatus status = NoData;
         for (size_t j = 0; j < assembly.sources.size(); ++j) {
             Impl::Subscription& source = *assembly.sources[j];
-            FlowStatus current = PortDataAccess::refresh(*source.input);
+            FlowStatus current = source.acquisition->current;
             if (current == NewData) {
                 source.received = true; status = NewData;
                 for (size_t m = 0; m < source.mappings.size(); ++m)
@@ -405,7 +431,7 @@ bool CyclicDataFlow::disconnect(base::PortInterface& port, base::PortInterface* 
         Impl::Subscription& s = *impl->subscriptions[i];
         if ((s.source == &port && (!other || s.destination == other)) ||
             (s.destination == &port && (!other || s.source == other))) {
-            invalidate(); impl->assemblies.clear();
+            invalidate(); impl->assemblies.clear(); impl->acquisitions.clear();
             impl->subscriptions.erase(impl->subscriptions.begin() + i);
             removed = true;
         } else ++i;
@@ -415,7 +441,7 @@ bool CyclicDataFlow::disconnect(base::PortInterface& port, base::PortInterface* 
 
 void CyclicDataFlow::forget(base::PortInterface& port) {
     invalidate();
-    impl->inputs.clear(); impl->outputs.clear(); impl->assemblies.clear();
+    impl->inputs.clear(); impl->outputs.clear(); impl->assemblies.clear(); impl->acquisitions.clear();
     disconnect(port);
     impl->watched.erase(std::remove(impl->watched.begin(), impl->watched.end(), &port), impl->watched.end());
     port.removeCyclicDependency(this);

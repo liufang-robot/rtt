@@ -65,6 +65,7 @@ namespace RTT
         friend class internal::PortDataAccess;
         virtual DataSourceBase::shared_ptr imageSource() { return {}; }
         virtual FlowStatus refreshImage() { return NoData; }
+        virtual void discardSnapshot() {}
         virtual FlowStatus receive(DataSourceBase::shared_ptr source, bool copy_old_data);
         virtual void setImageStatus(FlowStatus value) { image_status_.store(value); }
     protected:

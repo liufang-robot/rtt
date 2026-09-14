@@ -64,8 +64,9 @@ class InputPort : public base::InputPortInterface {
     InputPort(const InputPort&) = delete;
     InputPort& operator=(const InputPort&) = delete;
     base::DataSourceBase::shared_ptr imageSource() override { return image_source_; }
+    void discardSnapshot() override { snapshot_.reset(); }
     void setImageStatus(FlowStatus value) override {
-        if (value == NewData) snapshot_->publish(image_);
+        if (value == NewData && snapshot_) snapshot_->publish(image_);
         image_status_.store(value, std::memory_order_release);
     }
     FlowStatus refreshImage() override {
@@ -93,13 +94,13 @@ public:
     const T& data() const noexcept { return image_; }
     /** Observe the last prepared image without touching the incoming channel. */
     bool snapshot(T& value) const {
-        return snapshot_->copy(value, true);
+        return snapshot_ && snapshot_->copy(value, true);
     }
     /** Initialize default values/capacity while the component is inactive. */
     void setDataSample(const T& value) {
         if (!prepareConnectionChange()) throw std::logic_error("input image is active");
         image_ = value;
-        snapshot_->initialize(value);
+        if (snapshot_) snapshot_->initialize(value);
         read_cursor_ = {};
         setImageStatus(NoData);
     }
@@ -113,7 +114,9 @@ public:
     const types::TypeInfo* getTypeInfo() const override { return internal::DataSourceTypeInfo<T>::getTypeInfo(); }
     base::PortInterface* clone() const override { return new InputPort<T>(getName()); }
     base::PortInterface* antiClone() const override { return new OutputPort<T>(getName()); }
-    base::DataSourceBase* getDataSource() override { return new internal::PortSnapshotSource<T>(snapshot_, true); }
+    base::DataSourceBase* getDataSource() override {
+        return snapshot_ ? new internal::PortSnapshotSource<T>(snapshot_, true) : nullptr;
+    }
     bool addConnection(internal::ConnID* id, base::ChannelElementBase::shared_ptr channel,
                        const ConnPolicy& policy = ConnPolicy()) override {
         if (!dynamic_cast<base::ChannelElement<T>*>(channel.get())) return false;

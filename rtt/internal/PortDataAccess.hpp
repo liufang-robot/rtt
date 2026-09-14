@@ -16,6 +16,8 @@ public:
     static base::DataSourceBase::shared_ptr image(base::InputPortInterface& port) { return port.imageSource(); }
     static base::DataSourceBase::shared_ptr image(base::OutputPortInterface& port) { return port.imageSource(); }
     static FlowStatus refresh(base::InputPortInterface& port) { return port.refreshImage(); }
+    /** Configuration-only: a private staging input has no observation surface. */
+    static void discardSnapshot(base::InputPortInterface& port) { port.discardSnapshot(); }
     static WriteStatus commit(base::OutputPortInterface& port) { return port.commitImage(); }
     static void status(base::InputPortInterface& port, FlowStatus value) { port.setImageStatus(value); }
     static FlowStatus receive(base::InputPortInterface& port, base::DataSourceBase::shared_ptr value, bool copy_old = true) {
