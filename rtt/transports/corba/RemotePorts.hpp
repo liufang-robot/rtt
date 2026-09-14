@@ -103,9 +103,6 @@ namespace RTT {
                     std::string const& name,
                     PortableServer::POA_ptr poa);
 
-            bool keepsLastWrittenValue() const;
-            void keepLastWrittenValue(bool new_flag);
-
             virtual bool disconnect(PortInterface* port);
             using RemotePort<base::OutputPortInterface>::disconnect;
 

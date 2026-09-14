@@ -1,3 +1,4 @@
+#include <rtt/internal/PortDataAccess.hpp>
 
 #include <TaskContext.hpp>
 #include <InputPort.hpp>
@@ -26,19 +27,6 @@ public:
     {
         addPort("ip",ip).doc("ip");
         addPort("ip",ip2).doc("ip"); // overrides ip
-        addPort("op",op).doc("op");
-    }
-};
-
-class TestEventService : public Service {
-public:
-    InputPort<int> ip;
-    InputPort<int> ip2;
-    OutputPort<int> op;
-    TestEventService(TaskContext* owner = 0) : Service("portservice", owner)
-    {
-        addEventPort("ip",ip).doc("ip");
-        addEventPort("ip",ip2).doc("ip"); // overrides ip
         addPort("op",op).doc("op");
     }
 };
@@ -72,35 +60,6 @@ BOOST_AUTO_TEST_CASE(testAddPortWithOwner)
 }
 
 
-BOOST_AUTO_TEST_CASE(testAddEventPort)
-{
-    TestEventService* ts = new TestEventService();
-    Service::shared_ptr s( ts );
-    TaskContext tc("tc");
-
-    tc.provides()->addService( s );
-
-    // check that last port is the real thing:
-    BOOST_CHECK( tc.provides("portservice")->getPort("ip") == &ts->ip2 );
-
-    BOOST_CHECK( tc.provides("portservice")->getPort("op") == &ts->op );
-}
-
-BOOST_AUTO_TEST_CASE(testAddEventPortWithOwner)
-{
-    TaskContext tc("tc");
-    TestEventService* ts = new TestEventService(&tc);
-    Service::shared_ptr s( ts );
-
-    tc.provides()->addService( s );
-
-    // check that last port is the real thing:
-    BOOST_CHECK( tc.provides("portservice")->getPort("ip") == &ts->ip2 );
-
-    BOOST_CHECK( tc.provides("portservice")->getPort("op") == &ts->op );
-}
-
-
 #ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
 
 BOOST_AUTO_TEST_CASE(testUsePort)
@@ -116,21 +75,16 @@ BOOST_AUTO_TEST_CASE(testUsePort)
 
     ts->ip2.connectTo( &ts->op );
 
-    // use operation interface of port:
-    BOOST_REQUIRE( tc.provides()->hasService("portservice") );
-    BOOST_REQUIRE( tc.provides("portservice")->hasService("op") );
-    BOOST_REQUIRE( tc.provides("portservice")->provides("op")->hasOperation("write") );
-
-    OperationCaller<WriteStatus(int const&)> write = tc.provides("portservice")->provides("op")->getOperation("write");
-    BOOST_CHECK( write.ready() );
-    BOOST_CHECK_EQUAL( write( 3 ), WriteSuccess );
-
-    int result;
-    OperationCaller<FlowStatus(int&)> read = tc.provides("portservice")->provides("ip")->getOperation("read");
-    BOOST_CHECK( read.ready() );
-    FlowStatus fs = read( result  );
-    BOOST_CHECK_EQUAL( result, 3);
-    BOOST_CHECK_EQUAL( fs, NewData );
+    BOOST_CHECK(!tc.provides("portservice")->hasService("op"));
+    BOOST_CHECK(!tc.provides("portservice")->hasService("ip"));
+    ts->op.data() = 3;
+    BOOST_CHECK_EQUAL(ts->op.snapshot(), 0);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::commit(ts->op), WriteSuccess);
+    BOOST_CHECK_EQUAL(ts->op.snapshot(), 3);
+    BOOST_CHECK_EQUAL(ts->ip2.status(), NoData);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::refresh(ts->ip2), NewData);
+    BOOST_CHECK_EQUAL(ts->ip2.data(), 3);
+    BOOST_CHECK_EQUAL(ts->ip2.status(), NewData);
 }
 
 BOOST_AUTO_TEST_CASE(testUsePortWithOwner)
@@ -143,17 +97,16 @@ BOOST_AUTO_TEST_CASE(testUsePortWithOwner)
 
     ts->ip2.connectTo( &ts->op );
 
-    // use operation interface of port:
-    OperationCaller<void(int const&)> write = tc.provides("portservice")->provides("op")->getOperation("write");
-    BOOST_CHECK( write.ready() );
-    write( 3 );
-
-    int result;
-    OperationCaller<FlowStatus(int&)> read = tc.provides("portservice")->provides("ip")->getOperation("read");
-    BOOST_CHECK( read.ready() );
-    FlowStatus fs = read( result  );
-    BOOST_CHECK_EQUAL( result, 3);
-    BOOST_CHECK_EQUAL( fs, NewData );
+    BOOST_CHECK(!tc.provides("portservice")->hasService("op"));
+    BOOST_CHECK(!tc.provides("portservice")->hasService("ip"));
+    ts->op.data() = 3;
+    BOOST_CHECK_EQUAL(ts->op.snapshot(), 0);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::commit(ts->op), WriteSuccess);
+    BOOST_CHECK_EQUAL(ts->op.snapshot(), 3);
+    BOOST_CHECK_EQUAL(ts->ip2.status(), NoData);
+    BOOST_REQUIRE_EQUAL(internal::PortDataAccess::refresh(ts->ip2), NewData);
+    BOOST_CHECK_EQUAL(ts->ip2.data(), 3);
+    BOOST_CHECK_EQUAL(ts->ip2.status(), NewData);
 }
 
 #endif

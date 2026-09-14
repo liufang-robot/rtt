@@ -42,6 +42,7 @@
 #include "Channels.hpp"
 #include "ConnID.hpp"
 #include "PortConnectionLock.hpp"
+#include <memory>
 
 namespace RTT
 { namespace internal {
@@ -91,11 +92,16 @@ namespace RTT
          */
         bool channelReady(base::ChannelElementBase::shared_ptr const& channel, ConnPolicy const& policy, ConnID *conn_id)
         {
-            // cid is deleted/owned by the ConnectionManager.
+            // Caller-provided IDs remain caller-owned on failure. An ID made
+            // here transfers to ConnectionManager only after registration.
+            std::unique_ptr<internal::ConnID> generated_id;
             if ( channel ) {
-                if (!conn_id) conn_id = new internal::SimpleConnID();
-                if ( channel->inputReady(this) ) {
-                    port->addConnection(conn_id, channel, policy);
+                if (!conn_id) {
+                    generated_id.reset(new internal::SimpleConnID());
+                    conn_id = generated_id.get();
+                }
+                if (channel->inputReady(this) && port->addConnection(conn_id, channel, policy)) {
+                    generated_id.release();
                     return true;
                 }
             }
@@ -103,19 +109,13 @@ namespace RTT
             return false;
         }
 
-        /** Writes a new sample on this connection
-         * This should only be called if this endpoint has a buffer output,
-         * in which case the base class's write implementation will return true
-         * and the port is signalled. Otherwise, return false, as other type of
-         * connections are supposed to have a data storage element. */
+        /** Writes a new sample to this endpoint's shared input storage.
+         * Connections without shared input storage receive WriteFailure; their
+         * samples must be written to the channel's own data storage element. */
         virtual WriteStatus write(typename Base::param_t sample)
         {
             WriteStatus result = Base::write(sample);
-            if (result == WriteSuccess) {
-                if (!signal()) {
-                    return WriteFailure;
-                }
-            } else if (result == NotConnected) {
+            if (result == NotConnected) {
                 // A ConnOutputEndPoint is always connected: If Base::write(sample) returned NotConnected the port
                 // does not have a shared input buffer and you cannot write into this ChannelElement, but it still
                 // should be considered as connected.
@@ -154,19 +154,6 @@ namespace RTT
             return true;
         }
 
-        virtual bool signal()
-        {
-            InputPort<T>* port = this->port;
-#ifdef ORO_SIGNALLING_PORTS
-            if (port && port->new_data_on_port_event)
-                (*port->new_data_on_port_event)(port);
-#else
-            if (port )
-                port->signal();
-#endif
-            return true;
-        }
-
         virtual base::PortInterface* getPort() const {
             return this->port;
         }
@@ -200,4 +187,3 @@ namespace RTT
 }}
 
 #endif
-

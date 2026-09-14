@@ -40,12 +40,10 @@
 #define ORO_EXECUTION_DATA_FLOW_INTERFACE_HPP
 
 #include <vector>
-#include <map>
 #include <string>
 #include "base/InputPortInterface.hpp"
 #include "base/OutputPortInterface.hpp"
 #include "rtt-fwd.hpp"
-#include <boost/function.hpp>
 
 namespace RTT
 {
@@ -69,20 +67,16 @@ namespace RTT
          */
         typedef std::vector<std::string> PortNames;
 
-        typedef boost::function<void(base::PortInterface*)> SlotFunction;
-
         /**
          * Construct the DataFlow interface of a Service.
-         * @param parent If not null, a Service will be added
-         * to \a parent  for each port added to this interface.
+         * @param parent Owning service used to register ports in the component cycle.
          */
         DataFlowInterface(Service* parent = 0 );
 
         ~DataFlowInterface();
 
         /**
-         * Name and add a Port to the interface of this task and
-         * add a Service with the same name of the port.
+         * Name and register a cyclic Port in this interface.
          * @param name The name to give to the port.
          * @param port The port to add.
          */
@@ -93,59 +87,16 @@ namespace RTT
         }
 
         /**
-         * Add a Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * If a port or service with the name already exists, addPort
-         * will replace them with \a port and log a warning.
+         * Register a cyclic Port. An existing same-name port is replaced;
+         * real services are independent and are preserved.
          * @param port The port to add.
          * @return \a port
          */
         base::PortInterface& addPort(base::PortInterface& port);
 
         /**
-         * Name and add an Event triggering Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * @param name The name to give to the port.
-         * @param port The port to add.
-         * @param callback (Optional) provide a function which will be called
-         * when new data arrives on this port. The callback function will
-         * be called \b instead of updateHook(). Use this->trigger() in your
-         * callback function in order to schedule an updateHook() nevertheless
-         * in the same cycle. If callback is not provided, updateHook() will be
-         * executed by default.
-         */
-        base::InputPortInterface& addEventPort(const std::string& name, base::InputPortInterface& port, SlotFunction callback = SlotFunction() ) {
-            if ( !chkPtr("addEventPort", name, &port) ) return port;
-            port.setName(name);
-            return addEventPort(port,callback);
-        }
-
-        /**
-         * Add an Event triggering Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * When data arrives on this port your TaskContext will be woken up
-         * and updateHook() will be executed by default.
-         * @param port The port to add.
-         * @param callback (Optional) provide a function which will be called
-         * when new data arrives on this port. The callback function will
-         * be called \b instead of updateHook(). Use this->trigger() in your
-         * callback function in order to schedule an updateHook() nevertheless
-         * in the same cycle. If callback is not provided, updateHook() will be
-         * executed by default.
-         * @return \a port
-         */
-        base::InputPortInterface& addEventPort(base::InputPortInterface& port, SlotFunction callback = SlotFunction() );
-
-        /**
-         * Remove a Port from this interface.
-         * This will remove all services, connections and callbacks
-         * assosiated with this port.
-         * @param port The port to remove.
-         * @note Since services are refcounted, removePort may effectively
-         * delete the \a this object in case no Service::shared_ptr exists
-         * to this DataFlowInterface. In order to prevent such cleanup,
-         * create a Service::shared_ptr to this object before calling
-         * removePort().
+         * Remove a Port and its connections from this interface.
+         * @param name The port to remove.
          */
         void removePort(const std::string& name);
 
@@ -179,14 +130,8 @@ namespace RTT
         std::string getPortDescription(const std::string& name) const;
 
         /**
-         * Sets the description for the service of an added port.
-         * It's prefered to use getPort(name)->doc(description) instead
-         * of this method, since this function only updates the documentation
-         * of the service representing this port, and not the documentation
-         * stored in the port.
-         * @param name The port name
-         * @param description The new description for this port's service
-         * @return true if the port was found and the description was set, false otherwise.
+         * Set the documentation stored in an added port.
+         * @return true if the port exists.
          */
         bool setPortDescription(const std::string& name, const std::string description);
 
@@ -194,6 +139,7 @@ namespace RTT
          * Returns the component this interface belongs to.
          */
         TaskContext* getOwner() const;
+        Service* getServiceInterface() const { return mservice; }
 
         /**
          * Returns the service this interface belongs to.
@@ -203,36 +149,13 @@ namespace RTT
         Service* getService() const { return mservice; }
 
         /**
-         * Add a Port to this task without registering a service for it.
-         * If a port with the same name already exists, addPort
-         * will replace it with \a port and log a warning.
-         * @return \a port
+         * Registration alias for addPort(); every registered port participates
+         * in its owner's cyclic I/O, and neither registration creates a service.
          */
         base::PortInterface& addLocalPort(base::PortInterface& port);
 
         /**
-         * Add an Event triggering Port to this task without
-         * registering a service for it.
-         * When data arrives on this port your TaskContext will be woken up
-         * and updateHook will be executed.
-         * @param port The port to add.
-         * @param callback (Optional) provide a function which will be called
-         * when new data arrives on this port. The callback function will
-         * be called in sequence with updateHook(), so asynchronously with
-         * regard to the arrival of data on the port.
-         * @return \a port
-         */
-        base::InputPortInterface& addLocalEventPort(base::InputPortInterface& port,
-                SlotFunction callback = SlotFunction() );
-
-        /**
-         * Remove a locally added Port from this interface.
-         * This will remove all connections and callbacks
-         * assosiated with this port.
-         * @param port The port to remove.
-         * @note this function will not check if a service with the same name
-         * as \a name exists, and will not remove it. So use removePort() in case
-         * you want to get rid of the service as well.
+         * Removal alias for removePort().
          */
         void removeLocalPort(const std::string& name);
 
@@ -246,32 +169,11 @@ namespace RTT
         }
 
         /**
-         * Remove all added ports from this interface and
-         * all associated TaskObjects.
+         * Remove all registered ports and their connections.
          */
         void clear();
 
-#ifdef ORO_SIGNALLING_PORTS
-        /**
-         * Called by TaskContext::start() to setup all triggers of EventPorts.
-         */
-        void setupHandles();
-        /**
-         * Called by TaskContext::stop() to remove all triggers of EventPorts.
-         */
-        void cleanupHandles();
-#else
-        /**
-         * Used by the input ports to notify this class of new data.
-         */
-        void dataOnPort(base::PortInterface* port);
-#endif
     protected:
-        /**
-         * Create a Service through which one can access a Port.
-         * @param name The port name
-         */
-        Service* createPortObject(const std::string& name);
 
         bool chkPtr(const std::string &where, const std::string& name, const void* ptr);
         /**
@@ -282,14 +184,6 @@ namespace RTT
          * The parent Service. May be null in exceptional cases.
          */
         Service* mservice;
-#ifdef ORO_SIGNALLING_PORTS
-        /**
-         * These handles contain the links from an event port's signal to
-         * the TaskContext::dataOnPort method.
-         */
-        typedef std::vector< Handle > Handles;
-        Handles handles;
-#endif
 
     };
 

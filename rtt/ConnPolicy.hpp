@@ -51,12 +51,9 @@ namespace RTT {
      * behave. Various parameters are available:
      *
      * <ul>
-     *  <li> the connection type: DATA, BUFFER, CIRCULAR_BUFFER or UNBUFFERED.
-     *       On a data connection, the reader will have
-     *       only access to the last written value. On a buffered connection, a
-     *       \a size number of elements can be stored until the reader reads
-     *       them. BUFFER drops newer samples on full, CIRCULAR_BUFFER drops older samples on full.
-     *       UNBUFFERED is only valid for output streaming connections.
+     *  <li> the connection type: DATA retains the latest value; UNBUFFERED is
+     *       only valid for output streaming connections. Data ports have no FIFO mode.
+     *       Transport queues are independent; size may configure their depth.
      *
      *  <li> the locking policy: LOCKED, LOCK_FREE or UNSYNC. This defines how locking is done in the
      *       connection. For now, only three policies are available. LOCKED uses
@@ -66,9 +63,8 @@ namespace RTT {
      *
      *  <li> if, upon connection, the last value that has been written on the
      *       writer end should be written on the connection as well to
-     *       initialize it. This flag has an effect only if the writer has
-     *       keepsLastWrittenValue() set to true (see
-     *       OutputPortInterface::keepLastWrittenValue()).
+     *       initialize it. Initialization uses the last committed output snapshot;
+     *       an output image that has never been committed sends no initial value.
      *
      *  <li> if the data is pushed or pulled on the connection. This has an
      *       effect only on multi-process communication. In the pushed case (the
@@ -109,8 +105,9 @@ namespace RTT {
     public:
         static const int UNBUFFERED = -1;
         static const int DATA   = 0;
-        static const int BUFFER = 1;
-        static const int CIRCULAR_BUFFER = 2;
+
+        /** Whether the kind exists; input connections additionally require DATA. */
+        bool validType() const { return type == DATA || type == UNBUFFERED; }
 
         static const int UNSYNC    = 0;
         static const int LOCKED    = 1;
@@ -129,27 +126,7 @@ namespace RTT {
         static ConnPolicy &Default();
 
         /**
-         * Create a policy for a (lock-free) fifo buffer connection of a given size.
-         * @param size The size of the buffer in this connection
-         * @param lock_policy The locking policy
-         * @param init_connection If an initial sample should be pushed into the buffer upon creation.
-         * @param pull In inter-process cases, should the consumer pull itself ?
-         * @return the specified policy.
-         */
-        static ConnPolicy buffer(int size, int lock_policy = LOCK_FREE, bool init_connection = false, bool pull = false);
-
-        /**
-         * Create a policy for a (lock-free) \b circular fifo buffer connection of a given size.
-         * @param size The size of the buffer in this connection
-         * @param lock_policy The locking policy
-         * @param init_connection If an initial sample should be pushed into the buffer upon creation.
-         * @param pull In inter-process cases, should the consumer pull itself ?
-         * @return the specified policy.
-         */
-        static ConnPolicy circularBuffer(int size, int lock_policy = LOCK_FREE, bool init_connection = false, bool pull = false);
-
-        /**
-         * Create a policy for a (lock-free) shared data connection of a given size.
+         * Create a policy for a latest-value DATA connection (lock-free by default).
          * @param lock_policy The locking policy
          * @param init_connection If the data object should be initialised with the last value of the OutputPort upon creation.
          * @param pull In inter-process cases, should the consumer pull data itself ?
@@ -167,8 +144,7 @@ namespace RTT {
          * Constructs a new ConnPolicy instance based on the current
          * default settings as returned by ConnPolicy::Default(), but
          * overrides the type.
-         * You should not use this contructor anymore and prefer the static
-         * methods \ref ConnPolicy::data(), \ref ConnPolicy::buffer(), etc. instead.
+         * You should not use this contructor anymore and prefer \ref ConnPolicy::data() instead.
          * @param type
          * @deprecated
          */
@@ -178,27 +154,25 @@ namespace RTT {
          * Constructs a new ConnPolicy instance based on the current
          * default settings as returned by ConnPolicy::Default(), but
          * overrides the type and lock_policy.
-         * You should not use this contructor anymore and prefer the static
-         * methods \ref ConnPolicy::data(), \ref ConnPolicy::buffer(), etc. instead.
+         * You should not use this contructor anymore and prefer \ref ConnPolicy::data() instead.
          * @param type
          * @param lock_policy
          * @deprecated
          */
         explicit ConnPolicy(int type, int lock_policy);
 
-        /** DATA, BUFFER or CIRCULAR_BUFFER */
+        /** DATA, or UNBUFFERED for an output stream. Other values are rejected. */
         int    type;
 
-        /** If the connection is a buffered connection, the size of the buffer */
+        /** Transport queue depth hint (e.g. POSIX mqueue); zero uses its default. */
         int    size;
 
         /** This is the locking policy on the connection */
         int    lock_policy;
 
         /** If true, one should initialize the connection's value with the last
-         * value written on the writer port. This is only possible if the writer
-         * port has the keepsLastWrittenValue() flag set (i.e. if it remembers
-         * what was the last written value).
+         * committed output value. An output that has not yet completed a
+         * publication boundary sends no initial value.
          */
         bool   init;
 
@@ -209,14 +183,13 @@ namespace RTT {
         bool   pull;
 
         /**
-         * The policy on how buffer elements will be installed for this connection, which influences
-         * the behavior of reads and writes if the port has muliple connections.
+         * The placement and sharing of the latest-value storage for this connection.
          * See \ref BufferPolicy enum for possible options.
          */
         int    buffer_policy;
 
         /**
-         * The maximum number of threads that will access the connection data or buffer object.
+         * The maximum number of threads that will access the connection data object.
          * This only needs to be specified for lock-free data structures.
          * If 0, the number of threads will be determined by a simple heuristic depending on the
          * read and write policies of the connection.
@@ -226,7 +199,7 @@ namespace RTT {
         /**
          * Whether the connection described by this connection policy is mandatory, which
          * means that write operations will fail if the connection could not be served, e.g. due
-         * to a full input buffer or because of a broken remote connection.
+         * to a full transport queue or because of a broken remote connection.
          * By default, all connections are mandatory.
          */
         bool   mandatory;
@@ -264,4 +237,3 @@ namespace RTT {
 }
 
 #endif
-

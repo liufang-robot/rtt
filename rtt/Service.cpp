@@ -39,6 +39,7 @@
 #include "Service.hpp"
 #include "TaskContext.hpp"
 #include <algorithm>
+#include <set>
 #include "internal/mystd.hpp"
 #include <algorithm>
 
@@ -46,6 +47,31 @@ namespace RTT {
     using namespace detail;
     using namespace std;
     using namespace boost;
+
+    namespace {
+    bool hasDataPorts(Service& service, std::set<Service*>& visited) {
+        if (!visited.insert(&service).second) return false;
+        if (!service.getPorts().empty()) return true;
+        std::vector<std::string> children = service.getProviderNames();
+        for (size_t i = 0; i < children.size(); ++i) {
+            Service::shared_ptr child = service.getService(children[i]);
+            if (child && hasDataPorts(*child, visited)) return true;
+        }
+        return false;
+    }
+    bool hasDataPorts(Service& service) { std::set<Service*> visited; return hasDataPorts(service, visited); }
+    void detachDataPorts(Service& service, std::set<Service*>& visited) {
+        if (!visited.insert(&service).second) return;
+        DataFlowInterface::Ports ports = service.getPorts();
+        for (size_t i = 0; i < ports.size(); ++i) ports[i]->preparePortDestruction();
+        std::vector<std::string> children = service.getProviderNames();
+        for (size_t i = 0; i < children.size(); ++i) {
+            Service::shared_ptr child = service.getService(children[i]);
+            if (child) detachDataPorts(*child, visited);
+        }
+    }
+    void detachDataPorts(Service& service) { std::set<Service*> visited; detachDataPorts(service, visited); }
+    }
 
     Service::shared_ptr Service::Create(const std::string& name, TaskContext* owner) {
         shared_ptr ret(new Service(name,owner));
@@ -65,6 +91,7 @@ namespace RTT {
 
     Service::~Service()
     {
+        if (hasDataPorts(*this)) detachDataPorts(*this);
         clear();
     }
 
@@ -79,6 +106,10 @@ namespace RTT {
     }
 
     bool Service::addService( Service::shared_ptr obj ) {
+        if (hasDataPorts(*obj)) {
+            if (mowner && (mowner->base::TaskCore::isRunning() || mowner->base::TaskCore::getTargetState() >= base::TaskCore::Running)) return false;
+            if (mowner) mowner->invalidateConnections();
+        }
         if ( services.find( obj->getName() ) != services.end() ) {
             Logger::log().logf(Logger::Error, "Service",
                                "Could not add Service %s: name already in use.",
@@ -103,9 +134,18 @@ namespace RTT {
     }
 
     void Service::removeService( string const& name) {
+        if (services.count(name) && hasDataPorts(*services.find(name)->second)) {
+            if (mowner && (mowner->base::TaskCore::isRunning() || mowner->base::TaskCore::getTargetState() >= base::TaskCore::Running))
+                throw std::runtime_error("Cannot remove a data service of a running component");
+            if (mowner) mowner->invalidateConnections();
+        }
         // carefully written to avoid destructor to call back on us when called from clear().
         if ( services.count(name) ) {
             shared_ptr sp = services.find(name)->second;
+            if (hasDataPorts(*sp)) {
+                sp->clear();
+                sp->setOwner(0);
+            }
             services.erase(name);
             sp->setParent(Service::shared_ptr());
             sp.reset(); // this possibly deletes.
@@ -219,6 +259,12 @@ namespace RTT {
 
     void Service::clear()
     {
+        if (hasDataPorts(*this)) {
+            if (mowner && (mowner->base::TaskCore::isRunning() || mowner->base::TaskCore::getTargetState() >= base::TaskCore::Running))
+                throw std::runtime_error("Cannot clear a data service of a running component");
+            if (mowner) mowner->invalidateConnections();
+        }
+        DataFlowInterface::clear();
         while ( !simpleoperations.empty() )
         {
             simpleoperations.erase(simpleoperations.begin() );
@@ -262,10 +308,17 @@ namespace RTT {
         OperationInterface::remove(name);
     }
     void Service::setOwner(TaskContext* new_owner) {
+        if (hasDataPorts(*this)) {
+            if (mowner != new_owner && mowner && (mowner->base::TaskCore::isRunning() || mowner->base::TaskCore::getTargetState() >= base::TaskCore::Running))
+                throw std::runtime_error("Cannot move a data service of a running component");
+            if (mowner) mowner->invalidateConnections();
+            if (new_owner) new_owner->invalidateConnections();
+        }
         for( SimpleOperations::iterator it= simpleoperations.begin(); it != simpleoperations.end(); ++it)
             it->second->setOwner( new_owner ? new_owner->engine() : 0);
 
         this->mowner = new_owner;
+        for (Ports::iterator it = mports.begin(); it != mports.end(); ++it) (*it)->setInterface(this);
 
         for( Services::iterator it= services.begin(); it != services.end(); ++it)
             it->second->setOwner( new_owner );
@@ -273,6 +326,7 @@ namespace RTT {
 
     void Service::setParent( Service::shared_ptr p) {
         parent = p;
+        for (Ports::iterator it = mports.begin(); it != mports.end(); ++it) (*it)->setInterface(this);
     }
 
     internal::OperationCallerC Service::create(std::string name, ExecutionEngine* caller) {

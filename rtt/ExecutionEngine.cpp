@@ -44,6 +44,7 @@
 #include "os/MutexLock.hpp"
 #include "internal/MWSRQueue.hpp"
 #include "TaskContext.hpp"
+#include "internal/CyclicDataFlow.hpp"
 #include "internal/CatchConfig.hpp"
 #include "extras/SlaveActivity.hpp"
 #include "os/traces.h"
@@ -69,7 +70,6 @@ namespace RTT
     ExecutionEngine::ExecutionEngine( TaskCore* owner )
         : taskc(owner),
           mqueue(new MWSRQueue<DisposableInterface*>(ORONUM_EE_MQUEUE_SIZE) ),
-          port_queue(new MWSRQueue<PortInterface*>(ORONUM_EE_MQUEUE_SIZE) ),
           f_queue( new MWSRQueue<ExecutableInterface*>(ORONUM_EE_MQUEUE_SIZE) )
     {
     }
@@ -85,7 +85,6 @@ namespace RTT
             dis->dispose();
 
         delete f_queue;
-        delete port_queue;
         delete mqueue;
     }
 
@@ -227,24 +226,6 @@ namespace RTT
             msg_cond.broadcast(); // required for waitForMessages() (3rd party thread)
     }
 
-    void ExecutionEngine::processPortCallbacks()
-    {
-        // Fast bail-out :
-        if (port_queue->isEmpty())
-            return;
-
-        TaskContext* tc = dynamic_cast<TaskContext*>(taskc);
-        if (tc) {
-            PortInterface* port(0);
-            {
-                while ( port_queue->dequeue(port) ) {
-                    assert( port );
-                    tc->dataOnPortCallback(port);
-                }
-            }
-        }
-    }
-
     bool ExecutionEngine::process( DisposableInterface* c )
     {
         // We only reject running functions when we're in the FatalError state.
@@ -258,20 +239,6 @@ namespace RTT
                 MutexLock lock(msg_lock);
                 msg_cond.broadcast(); // required for waitAndProcessMessages() (EE thread)
             }
-            return result;
-        }
-        return false;
-    }
-
-    bool ExecutionEngine::process( PortInterface* port )
-    {
-        // We only reject running port callbacks when we're in the FatalError state.
-        if (taskc && taskc->mTaskState == TaskCore::FatalError )
-            return false;
-
-        if ( port && this->getActivity() ) {
-            bool result = port_queue->enqueue( port );
-            this->getActivity()->trigger();
             return result;
         }
         return false;
@@ -350,11 +317,9 @@ namespace RTT
         if (reason == RunnableInterface::Trigger) {
             /* Callback step */
             processMessages();
-            processPortCallbacks();
         } else if (reason == RunnableInterface::TimeOut || reason == RunnableInterface::IOReady) {
             /* Update step */
             processMessages();
-            processPortCallbacks();
             processFunctions();
             processHooks();
         }
@@ -366,7 +331,16 @@ namespace RTT
             if ( taskc->mTaskState == TaskCore::Running && taskc->mTargetState == TaskCore::Running ) {
                 TRY (
                     { tracepoint_context(orocos_rtt, TaskContext_updateHook, taskc->mName.c_str());
-                        taskc->updateHook(); }
+                        TaskContext* context = dynamic_cast<TaskContext*>(taskc);
+                        if (!context || context->cyclicDataFlow().refresh()) {
+                            taskc->updateHook();
+                            if (context && taskc->mTaskState == TaskCore::Running &&
+                                taskc->mTargetState == TaskCore::Running)
+                                context->cyclicDataFlow().commit();
+                        } else {
+                            taskc->error();
+                        }
+                    }
                 ) CATCH(std::exception const& e,
                     Logger::log().logf(Logger::Error, "ExecutionEngine", "in updateHook(): switching to exception state because of unhandled exception");
                     Logger::log().logf(Logger::Error, "ExecutionEngine", "  %s", e.what());

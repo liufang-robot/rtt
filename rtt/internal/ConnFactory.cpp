@@ -1,3 +1,4 @@
+#include "PortDataAccess.hpp"
 /***************************************************************************
   tag: Peter Soetens  Thu Oct 22 11:59:08 CEST 2009  ConnFactory.cpp
 
@@ -102,6 +103,7 @@ base::ChannelElementBase::shared_ptr RTT::internal::ConnFactory::buildRemoteChan
 }
 
 bool ConnFactory::createAndCheckConnection(base::OutputPortInterface& output_port, base::InputPortInterface& input_port, base::ChannelElementBase::shared_ptr channel_input, base::ChannelElementBase::shared_ptr channel_output, ConnPolicy const& policy) {
+    if (policy.type != ConnPolicy::DATA || !input_port.acceptsWholeConnection(&output_port)) return false;
     // connect channel input to channel output
     if (!channel_input->connectTo(channel_output, policy.mandatory)) {
         channel_input->disconnect(channel_output, true);
@@ -144,6 +146,7 @@ bool ConnFactory::createAndCheckConnection(base::OutputPortInterface& output_por
 }
 
 base::ChannelElementBase::shared_ptr ConnFactory::createAndCheckStream(base::OutputPortInterface& output_port, ConnPolicy const& policy, base::ChannelElementBase::shared_ptr channel_input, StreamConnID* conn_id) {
+    if (!policy.validType()) return {};
     if (policy.transport == 0 ) {
         Logger::log().logf(Logger::Error, "ConnFactory",
                            "Need a transport for creating streams.");
@@ -161,7 +164,7 @@ base::ChannelElementBase::shared_ptr ConnFactory::createAndCheckStream(base::Out
     }
     types::TypeMarshaller* ttt = dynamic_cast<types::TypeMarshaller*> ( type->getProtocol(policy.transport) );
     if (ttt) {
-        int size_hint = ttt->getSampleSize( output_port.getDataSource() );
+        int size_hint = ttt->getSampleSize( PortDataAccess::image(output_port) );
         policy.data_size = size_hint;
     } else {
         Logger::log().logf(Logger::Debug, "ConnFactory",
@@ -196,6 +199,7 @@ base::ChannelElementBase::shared_ptr ConnFactory::createAndCheckStream(base::Out
 }
 
 base::ChannelElementBase::shared_ptr ConnFactory::createAndCheckStream(base::InputPortInterface& input_port, ConnPolicy const& policy, base::ChannelElementBase::shared_ptr outhalf, StreamConnID* conn_id) {
+    if (policy.type != ConnPolicy::DATA) return {};
     if (policy.transport == 0 ) {
         Logger::log().logf(Logger::Error, "ConnFactory",
                            "Need a transport for creating streams.");
@@ -249,9 +253,31 @@ bool ConnFactory::createSharedConnection(base::OutputPortInterface* output_port,
     return createAndCheckSharedConnection(output_port, input_port, shared_connection, policy);
 }
 
+bool ConnFactory::validateSharedConnection(base::OutputPortInterface* output_port, base::InputPortInterface* input_port,
+                                          SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy)
+{
+    if (!shared_connection || policy.type != ConnPolicy::DATA || policy.buffer_policy != Shared) return false;
+    auto sources = shared_connection->getEndpointPorts(true);
+    auto destinations = shared_connection->getEndpointPorts(false);
+    const bool addingSource = output_port && output_port->getSharedConnection() != shared_connection;
+    if (input_port && std::find(destinations.begin(), destinations.end(), input_port) == destinations.end())
+        destinations.push_back(input_port);
+    for (auto* endpoint : sources)
+        if (endpoint && ((endpoint->getInterface() && endpoint->getInterface()->getOwner()) || endpoint->hasMemberConnections()) && !endpoint->connectionChangeAllowed()) return false;
+    for (auto* endpoint : destinations) {
+        if (endpoint && ((endpoint->getInterface() && endpoint->getInterface()->getOwner()) || endpoint->hasMemberConnections()) && !endpoint->connectionChangeAllowed()) return false;
+        auto* input = dynamic_cast<base::InputPortInterface*>(endpoint);
+        if (!input || !input->getInterface() || !input->getInterface()->getOwner()) continue;
+        if (input->hasMemberConnections() || sources.size() + (addingSource ? 1 : 0) > 1) return false;
+        if (input->getManager()->connected() && input->getSharedConnection() != shared_connection) return false;
+    }
+
+    return true;
+}
+
 bool ConnFactory::createAndCheckSharedConnection(base::OutputPortInterface* output_port, base::InputPortInterface* input_port, SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy)
 {
-    if (!shared_connection) return false;
+    if (!validateSharedConnection(output_port, input_port, shared_connection, policy)) return false;
 
     // check if the found connection is compatible to the requested policy
     if (

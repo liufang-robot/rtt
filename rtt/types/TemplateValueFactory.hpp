@@ -39,6 +39,7 @@
 #ifndef RTT_TEMPLATE_TYPE_FACTORY
 #define RTT_TEMPLATE_TYPE_FACTORY
 
+#include "../internal/ReadOnlyExpressionDataSource.hpp"
 #include "ValueFactory.hpp"
 #include "../Property.hpp"
 #include "../Attribute.hpp"
@@ -95,6 +96,10 @@ namespace RTT
                 if ( ! ds )
                     return 0;
                 return new Alias( name, ds );
+            }
+
+            base::DataSourceBase::shared_ptr buildReadOnlyExpression(boost::shared_ptr<internal::ObservationPath> path, bool live) const override {
+                return new internal::ReadOnlyExpressionDataSource<T>(path, live);
             }
 
             base::DataSourceBase::shared_ptr buildActionAlias(base::ActionInterface* action, base::DataSourceBase::shared_ptr in) const

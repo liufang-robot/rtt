@@ -37,9 +37,12 @@
 
 
 #include "../internal/Channels.hpp"
+#include "InputPortInterface.hpp"
+#include "OutputPortInterface.hpp"
 #include "../os/Atomic.hpp"
 #include "../os/MutexLock.hpp"
 #include <boost/lexical_cast.hpp>
+#include <set>
 
 using namespace RTT;
 using namespace RTT::detail;
@@ -252,6 +255,12 @@ bool MultipleInputsChannelElementBase::connected()
     return inputs.size() > 0;
 }
 
+MultipleInputsChannelElementBase::Inputs MultipleInputsChannelElementBase::getInputs() const
+{
+    RTT::os::SharedMutexLock lock(inputs_lock);
+    return inputs;
+}
+
 bool MultipleInputsChannelElementBase::inputReady(ChannelElementBase::shared_ptr const&)
 {
     RTT::os::SharedMutexLock lock(inputs_lock);
@@ -320,6 +329,48 @@ bool MultipleInputsChannelElementBase::signalFrom(ChannelElementBase *)
 
 MultipleOutputsChannelElementBase::MultipleOutputsChannelElementBase()
 {}
+
+MultipleOutputsChannelElementBase::Outputs MultipleOutputsChannelElementBase::getOutputs() const
+{
+    RTT::os::SharedMutexLock lock(outputs_lock);
+    return outputs;
+}
+
+std::vector<PortInterface*> ChannelElementBase::getEndpointPorts(bool upstream) const
+{
+    std::vector<PortInterface*> result;
+    std::vector<shared_ptr> pending(1, const_cast<ChannelElementBase*>(this));
+    std::set<ChannelElementBase*> visited;
+    while (!pending.empty()) {
+        shared_ptr current = pending.back(); pending.pop_back();
+        if (!current || !visited.insert(current.get()).second) continue;
+        PortInterface* port = current->getPort();
+        if ((upstream && dynamic_cast<OutputPortInterface*>(port)) ||
+            (!upstream && dynamic_cast<InputPortInterface*>(port))) {
+            result.push_back(port);
+            continue;
+        }
+        if (upstream) {
+            if (auto multiple = dynamic_cast<MultipleInputsChannelElementBase*>(current.get())) {
+                const auto inputs = multiple->getInputs();
+                pending.insert(pending.end(), inputs.begin(), inputs.end());
+                if (!inputs.empty()) continue;
+            } else if (auto input = current->getInput()) {
+                pending.push_back(input); continue;
+            }
+        } else {
+            if (auto multiple = dynamic_cast<MultipleOutputsChannelElementBase*>(current.get())) {
+                const auto outputs = multiple->getOutputs();
+                for (const auto& output : outputs) pending.push_back(output.channel);
+                if (!outputs.empty()) continue;
+            } else if (auto output = current->getOutput()) {
+                pending.push_back(output); continue;
+            }
+        }
+        if (current.get() != this) result.push_back(0);
+    }
+    return result;
+}
 
 MultipleOutputsChannelElementBase::Output::Output(ChannelElementBase::shared_ptr const &channel, bool mandatory)
     : channel(channel)
@@ -474,4 +525,3 @@ void RTT::base::intrusive_ptr_add_ref( ChannelElementBase* p )
 
 void RTT::base::intrusive_ptr_release( ChannelElementBase* p )
 { if ( oro_atomic_dec_and_test(&p->refcount) ) delete p; }
-

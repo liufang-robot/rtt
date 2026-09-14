@@ -194,8 +194,6 @@ namespace RTT {
         template<typename T>
         class DataSource;
         template<typename T>
-        class InputPortSource;
-        template<typename T>
         class LateConstReferenceDataSource;
         template<typename T>
         class LateReferenceDataSource;

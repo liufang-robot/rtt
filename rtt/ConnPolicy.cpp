@@ -74,28 +74,6 @@ namespace RTT
         return *s_default_policy;
     }
 
-    ConnPolicy ConnPolicy::buffer(int size, int lock_policy /*= LOCK_FREE*/, bool init_connection /*= false*/, bool pull /*= false*/)
-    {
-        ConnPolicy result;
-        result.type = BUFFER;
-        result.size = size;
-        result.lock_policy = lock_policy;
-        result.init = init_connection;
-        result.pull = pull;
-        return result;
-    }
-
-    ConnPolicy ConnPolicy::circularBuffer(int size, int lock_policy /*= LOCK_FREE*/, bool init_connection /*= false*/, bool pull /*= false*/)
-    {
-        ConnPolicy result;
-        result.type = CIRCULAR_BUFFER;
-        result.size = size;
-        result.lock_policy = lock_policy;
-        result.init = init_connection;
-        result.pull = pull;
-        return result;
-    }
-
     ConnPolicy ConnPolicy::data(int lock_policy /*= LOCK_FREE*/, bool init_connection /*= true*/, bool pull /*= false*/)
     {
         ConnPolicy result;
@@ -151,8 +129,6 @@ namespace RTT
         switch(cp.type) {
             case ConnPolicy::UNBUFFERED:      type = "UNBUFFERED"; break;
             case ConnPolicy::DATA:            type = "DATA"; break;
-            case ConnPolicy::BUFFER:          type = "BUFFER"; break;
-            case ConnPolicy::CIRCULAR_BUFFER: type = "CIRCULAR_BUFFER"; break;
             default:                          type = "(unknown type)"; break;
         }
         if (cp.size > 0) {

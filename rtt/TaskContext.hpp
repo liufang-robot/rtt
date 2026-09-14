@@ -50,9 +50,11 @@
 
 #include <string>
 #include <map>
+#include <memory>
 
 namespace RTT
 {
+    namespace internal { class CyclicDataFlow; }
     /**
      * The TaskContext is the C++ representation of an Orocos component.
      * It defines which services it provides and requires and which ports are inputs and
@@ -178,6 +180,12 @@ namespace RTT
          * TaskContext is local.
          */
         virtual bool ready();
+
+        /** Validate and prepare all root and nested service cyclic ports while stopped. */
+        bool finalizeConnections();
+        /** Invalidate a prepared plan before changing its topology. */
+        void invalidateConnections();
+        internal::CyclicDataFlow& cyclicDataFlow();
 
         virtual bool start();
         virtual bool stop();
@@ -524,33 +532,6 @@ namespace RTT
             return ports()->addPort(port);
         }
 
-        typedef boost::function<void(base::PortInterface*)> SlotFunction;
-        /**
-         * Name and add an Event triggering Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * @param name The name to give to the port.
-         * @param port The port to add.
-         * @param callback (Optional) provide a function which will be called asynchronously
-         * when new data arrives on this port. You can add more functions by using the port
-         * directly using base::PortInterface::getNewDataOnPort().
-         */
-        base::InputPortInterface& addEventPort(const std::string& name, base::InputPortInterface& port, SlotFunction callback = SlotFunction() ) {
-            port.setName(name);
-            return ports()->addEventPort(port,callback);
-        }
-
-        /**
-         * Add an Event triggering Port to the interface of this task and
-         * add a Service with the same name of the port.
-         * @param port The port to add.
-         * @param callback (Optional) provide a function which will be called asynchronously
-         * when new data arrives on this port. You can add more functions by using the port
-         * directly using base::PortInterface::getNewDataOnPort().
-         */
-        base::InputPortInterface& addEventPort(base::InputPortInterface& port, SlotFunction callback = SlotFunction() ) {
-            return ports()->addEventPort(port,callback);
-        }
-
         /**
          * Get a port of this Component.
          * @param name The port name
@@ -591,37 +572,6 @@ namespace RTT
          */
         void forceActivity( base::ActivityInterface* new_act);
 
-        /**
-         * Reimplement this method to influence how writing to
-         * event ports is handled by the component. This
-         * method will be executed in the writer's thread.
-         *
-         * The default implementation returns true if and only if
-         * the component is running.
-         *
-         * @retval true to indicate that the user callback should be
-         * invoked and trigger the component
-         * @retval false to ignore the new data and not trigger the
-         * component or invoke a user callback
-         */
-        virtual bool dataOnPortHook( base::PortInterface* port );
-
-        /**
-         * This method implements port callbacks. It will be called
-         * once per sample received on the port and is executed
-         * in the component's thread.
-         *
-         * The default implementation invokes the user callback
-         * if one was given in the addEventPort() call. It can be
-         * overwritten in a subclass to react on incoming data
-         * for all event ports. This is equivalent to adding this
-         * function as a user callback on each of the ports individually.
-         */
-        virtual void dataOnPortCallback( base::PortInterface* port );
-
-        // Required to invoke dataOnPortCallback() from the ExecutionEngine.
-        friend class ExecutionEngine;
-
     private:
 
         typedef std::map< std::string, TaskContext* > PeerMap;
@@ -648,26 +598,6 @@ namespace RTT
          */
         void setup();
 
-        friend class DataFlowInterface;
-        typedef std::map<base::PortInterface*, SlotFunction > UserCallbacks;
-        UserCallbacks user_callbacks;
-
-        /**
-         * This callback is called each time data arrived on an
-         * event port.
-         */
-        void dataOnPort(base::PortInterface* port);
-
-        /**
-         * Function to call in the thread of this component if data on the given port arrives.
-         */
-        void setDataOnPortCallback(base::InputPortInterface* port, SlotFunction callback);
-
-        /**
-         * Inform that a given port will no longer raise dataOnPort() events.
-         */
-        void removeDataOnPortCallback(base::PortInterface* port);
-
         /**
          * Check if this component could provide a given service,
          * either by already providing it (hasService(name)==true),
@@ -680,9 +610,9 @@ namespace RTT
         typedef std::map<std::string, boost::shared_ptr<ServiceRequester> > LocalServices;
         LocalServices localservs;
 
+        std::unique_ptr<internal::CyclicDataFlow> mcyclic;
         Service::shared_ptr tcservice;
         ServiceRequester::shared_ptr tcrequests;
-        os::Mutex mportlock;
 
         // non copyable
         TaskContext( TaskContext& );
@@ -699,6 +629,10 @@ namespace RTT
      * directions, by matching port names.
      * @see TaskContext::connectPorts
      */
+    /** Connect exactly matching typed members; an empty path selects the whole value. */
+    RTT_API bool connectMembers(base::OutputPortInterface& source, const std::string& sourcePath,
+                               base::InputPortInterface& destination, const std::string& destinationPath);
+
     RTT_API bool connectPorts(TaskContext* A, TaskContext* B);
 
     /**

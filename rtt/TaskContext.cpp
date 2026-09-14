@@ -38,6 +38,9 @@
 
 
 #include "TaskContext.hpp"
+#include "internal/CyclicDataFlow.hpp"
+#include "base/InputPortInterface.hpp"
+#include "base/OutputPortInterface.hpp"
 #include "base/ActionInterface.hpp"
 #include "plugin/PluginLoader.hpp"
 
@@ -69,6 +72,7 @@ namespace RTT
 
     TaskContext::TaskContext(const std::string& name, TaskState initial_state /*= Stopped*/)
         :  TaskCore( initial_state, name )
+           ,mcyclic(new internal::CyclicDataFlow(*this))
            ,tcservice(new Service(name,this) ), tcrequests( new ServiceRequester(name,this) )
 #if defined(ORO_ACT_DEFAULT_SEQUENTIAL)
            ,our_act( new SequentialActivity( this->engine() ) )
@@ -130,6 +134,7 @@ namespace RTT
             // here would only lead to calling invalid virtual functions.
             // [Rule no 1: Don't call virtual functions in a destructor.]
             // [Rule no 2: Don't call virtual functions in a constructor.]
+            mcyclic.reset();
             this->clear();
 
             // these need to be freed before we cleanup the EE:
@@ -431,13 +436,29 @@ namespace RTT
         return A->connectPeers(B);
     }
 
+    bool TaskContext::finalizeConnections() { return mcyclic && mcyclic->finalize(); }
+    void TaskContext::invalidateConnections() { if (mcyclic) mcyclic->invalidate(); }
+    internal::CyclicDataFlow& TaskContext::cyclicDataFlow() { return *mcyclic; }
+
+    bool connectMembers(base::OutputPortInterface& source, const std::string& sourcePath,
+                        base::InputPortInterface& destination, const std::string& destinationPath) {
+        if (!source.connectionChangeAllowed() || !destination.connectionChangeAllowed()) return false;
+        if (sourcePath.empty() && destinationPath.empty()) {
+            if (!source.validateWholeConnection(destination) || destination.connected()) return false;
+            return source.createConnection(destination, ConnPolicy::data());
+        }
+        TaskContext* owner = destination.getInterface() ? destination.getInterface()->getOwner() : 0;
+        if (!owner) return false;
+        bool result = owner->cyclicDataFlow().connect(source, sourcePath, destination, destinationPath);
+        if (!result) Logger::log().logf(Logger::Error, "CyclicDataFlow", "Invalid member connection %s:%s -> %s:%s",
+            source.getFullName().c_str(), sourcePath.c_str(), destination.getFullName().c_str(), destinationPath.c_str());
+        return result;
+    }
+
     bool TaskContext::start()
     {
-        if ( this->isRunning() )
+        if ( this->isRunning() || !finalizeConnections() )
             return false;
-#ifdef ORO_SIGNALLING_PORTS
-        ports()->setupHandles();
-#endif
         return TaskCore::start(); // calls startHook()
     }
 
@@ -446,42 +467,10 @@ namespace RTT
         if ( !this->isRunning() )
             return false;
         if (TaskCore::stop()) { // calls stopHook()
-#ifdef ORO_SIGNALLING_PORTS
-            ports()->cleanupHandles();
-#endif
             return true;
         }
         return false;
     }
 
-    void TaskContext::dataOnPort(PortInterface* port)
-    {
-        if ( this->dataOnPortHook(port) ) {
-            this->engine()->process(port);
-        }
-    }
 
-    bool TaskContext::dataOnPortHook(PortInterface*) {
-        return this->isRunning();
-    }
-
-    void TaskContext::dataOnPortCallback(PortInterface* port) {
-        UserCallbacks::iterator it = user_callbacks.find(port);
-        if (it != user_callbacks.end() )
-            it->second(port); // fire the user callback
-    }
-
-    void TaskContext::setDataOnPortCallback(InputPortInterface* port, TaskContext::SlotFunction callback) {
-        // user_callbacks will only be emitted from updateHook().
-        MutexLock lock(mportlock);
-        user_callbacks[port] = callback;
-    }
-
-    void TaskContext::removeDataOnPortCallback(PortInterface* port) {
-        MutexLock lock(mportlock);
-        UserCallbacks::iterator it = user_callbacks.find(port);
-        if (it != user_callbacks.end() ) {
-            user_callbacks.erase(it);
-        }
-    }
 }

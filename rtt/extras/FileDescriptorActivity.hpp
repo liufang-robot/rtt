@@ -315,9 +315,8 @@ namespace RTT { namespace extras {
          * - Trigger if trigger() has been called
          *
          * Calls runner->work with the same reason. By default \c
-         * ExecutionEngine will call all messages, port callbacks, functions
-         * and hooks in IOReady and TimeOut, but only messages and port
-         * callbacks in Trigger
+         * ExecutionEngine will call all messages, functions
+         * and hooks in IOReady and TimeOut, but only messages in Trigger.
          */
         virtual void work(base::RunnableInterface::WorkReason reason);
 

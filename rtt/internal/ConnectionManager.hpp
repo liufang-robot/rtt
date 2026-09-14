@@ -133,9 +133,7 @@ namespace RTT
             /**
              * Returns a list of all connections managed by this object.
              */
-            Connections getConnections() const {
-                return connections;
-            }
+            Connections getConnections() const;
 
             /**
              * Returns a pointer to the shared connection element this port may be connected to.

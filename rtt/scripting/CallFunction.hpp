@@ -48,6 +48,7 @@
 #include "../Logger.hpp"
 #include <boost/shared_ptr.hpp>
 #include <boost/bind/bind.hpp>
+#include <atomic>
 
 namespace RTT
 { namespace scripting {
@@ -65,7 +66,7 @@ namespace RTT
         ExecutionEngine* mrunner;
         ExecutionEngine* mcaller;
         boost::shared_ptr<ProgramInterface> _foo;
-        bool maccept;
+        std::atomic<bool> maccept;
 
         /**
          * Check if the function either finished successfully or encountered
@@ -164,8 +165,13 @@ namespace RTT
                 //    step and without a call to updateHook() in between.
                 //
                 do {
-                    maccept = mrunner->process( this );
-                    if ( !maccept ) return false;
+                    // The callback may yield before process() returns. Arm
+                    // the flag before exposing this action to the executor.
+                    maccept = true;
+                    if ( !mrunner->process( this ) ) {
+                        maccept = false;
+                        return false;
+                    }
 
                     // block for the result: foo stopped or in error or yielded
                     mrunner->waitForMessages(boost::bind(&CallFunction::checkIfDoneOrYielded, this) );
@@ -178,8 +184,11 @@ namespace RTT
                 // 1. Enqueue as a message callback (for the callback step)
                 //    ==> mrunner will call executeAndDispose() (see below)
                 //
-                maccept = mrunner->process( this );
-                if ( !maccept ) return false;
+                maccept = true;
+                if ( !mrunner->process( this ) ) {
+                    maccept = false;
+                    return false;
+                }
 
                 // block for the result: foo stopped or in error or yielded
                 mrunner->waitForMessages(boost::bind(&CallFunction::checkIfDoneOrYielded, this) );

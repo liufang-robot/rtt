@@ -49,17 +49,12 @@ class StateTest
 {
 public:
     InputPort<double> d_event;
-    InputPort<bool>   b_event;
-    InputPort<int>    t_event;
     Operation<void(void)>   v_event;
     Operation<void(double)> o_event;
     Operation<void(void)>   v1_event;
     Operation<void(void)>   v2_event;
     Operation<void(void)>   v3_event;
     Operation<void(double)> c_event;
-    OutputPort<double> d_event_source;
-    OutputPort<bool>   b_event_source;
-    OutputPort<int>    t_event_source;
     ScriptingService::shared_ptr sa;
 
     RTT::Operation<void(RTT::rt_string)>    setState_op;
@@ -87,9 +82,8 @@ public:
 public:
     StateTest()
         :
-         d_event("d_event"), b_event("b_event"), t_event("t_event"), v_event("v_event"),o_event("o_event"),
-         v1_event("v1_event"),v2_event("v2_event"),v3_event("v3_event"),c_event("c_event"),
-         d_event_source("d_event_source"), b_event_source("b_event_source"), t_event_source("t_event_source")
+         d_event("d_event"), v_event("v_event"),o_event("o_event"),
+         v1_event("v1_event"),v2_event("v2_event"),v3_event("v3_event"),c_event("c_event")
          ,sa( ScriptingService::Create(tc) ),
          setState_op("setState", &StateTest::setState, this, RTT::OwnThread)
     {
@@ -99,8 +93,6 @@ public:
         tc->addPeer(caller);
 
         tc->ports()->addPort( d_event );
-        tc->ports()->addPort( b_event );
-        tc->ports()->addPort( t_event );
 #ifdef ORO_SIGNALLING_OPERATIONS
         tc->provides()->addEventOperation( o_event );
         tc->provides()->addEventOperation( v_event );
@@ -119,13 +111,6 @@ public:
 
         tc->provides()->addOperation(setState_op).doc("Communicates state from SM").arg("state", "Name of state");
 
-        tc->ports()->addPort( d_event_source );
-        tc->ports()->addPort( b_event_source );
-        tc->ports()->addPort( t_event_source );
-
-        d_event_source.connectTo( &d_event );
-        b_event_source.connectTo( &b_event );
-        t_event_source.connectTo( &t_event );
         tc->start();
         i = 0;
         SimulationThread::Instance()->stop();
@@ -1556,271 +1541,141 @@ BOOST_AUTO_TEST_CASE( testStateOperationCallerSignalGuard )
 }
 #endif
 
-BOOST_AUTO_TEST_CASE( testStateEvents)
+#ifdef ORO_SIGNALLING_OPERATIONS
+BOOST_AUTO_TEST_CASE(testStateEvents)
 {
-    // test event reception in sub states.
-    string prog = string("StateMachine Y {\n")
-        + " var Int32 t = 0\n"
-        + " var Float64 et_global = 0.0, et_local = 0.0\n"
-        + " var Bool eb = false\n"
-        + " var Bool eflag = false\n"
-        + " transition t_event(t) { do log(\"Global Transition to TESTSELF\");} select TESTSELF\n" // test self transition
-        + " transition d_event(et_global)\n"
-        + "     if et_global < 0. then { do log(\"Global ISNEGATIVE Transition\");} select ISNEGATIVE\n"
-        + "     else { do log(\"Global ISPOSITIVE Transition\");} select ISPOSITIVE\n" // NewData == false !!!
-        + " initial state INIT {\n"
-        + "   entry { do log(\"INIT\"); set eb = false; }\n"
-        + " }\n"
-        + " state ISNEGATIVE {\n"
-        + "   entry { do log(\"ISNEGATIVE\");}\n"
-        + "   transition b_event(eb)\n"
-        + "      if (eb) then { do log(\"Local ISNEGATIVE->INIT Transition\");} select INIT\n"
-        + " }\n"
-        + " state ISPOSITIVE {\n"
-        + "   entry { do log(\"ISPOSITIVE\");}\n"
-        + "   transition b_event(eb)\n" // 20
-        + "      if (eb == true) then { do log(\"Local ISPOSITIVE->INIT Transition for b_event\");} select INIT\n"
-#ifdef ORO_SIGNALLING_OPERATIONS
-        + "   transition o_event(et_local)\n"
-        + "      if ( et_local == 3.0 ) then { do log(\"Local ISPOSITIVE->INIT Transition for o_event == \" + et_local);} select INIT\n"
-        + "         else { do log(\"Invalid et_local: \"+et_local); } \n"
+    // Discrete transitions use signalling operations; cyclic ports represent state.
+    var_i = 0;
+    const std::string program = R"ops(
+StateMachine Y {
+    var Float64 value = 0.0
+    transition o_event(value) if value < 0.0 select NEGATIVE
+    transition o_event(value) if value >= 0.0 select POSITIVE
+    transition v1_event() select SELF
+    initial state INIT {}
+    state NEGATIVE { transition v_event() select INIT }
+    state POSITIVE { transition v_event() select INIT }
+    state SELF {
+        entry { tvar_i = tvar_i + 1 }
+        transition v1_event() select SELF
+        transition v_event() select INIT
+    }
+    final state FINI {}
+}
+StateMachine X {
+    SubMachine Y y()
+    initial state INIT {
+        entry { do y.activate(); do y.start(); yield; }
+    }
+    final state FINI { entry { do y.deactivate(); } }
+}
+RootMachine X x()
+)ops";
+    parseState(program, tc);
+    runState("x", tc, false, true, 5);
+    StateMachinePtr child = sa->getStateMachine("x")->getChildren().front();
+    BOOST_REQUIRE(child->inState("INIT"));
+    OperationCaller<void(double)> sign(tc->provides()->getOperation("o_event"));
+    OperationCaller<void(void)> reset(tc->provides()->getOperation("v_event"));
+    OperationCaller<void(void)> tick(tc->provides()->getOperation("v1_event"));
+    BOOST_REQUIRE(sign.ready()); BOOST_REQUIRE(reset.ready()); BOOST_REQUIRE(tick.ready());
+    sign(-1.0); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("NEGATIVE"));
+    reset(); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("INIT"));
+    sign(1.0); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("POSITIVE"));
+    tick(); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("SELF")); BOOST_CHECK_EQUAL(var_i, 1);
+    tick(); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("SELF")); BOOST_CHECK_EQUAL(var_i, 1);
+    reset(); BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("INIT"));
+    checkState("x", tc); finishState("x", tc);
+}
 #endif
-        + " }\n"
-        + " state TESTSELF {\n"
-        + "   entry {\n"
-        + "      do log(\"TESTSELF\");\n"
-        + "      set eflag = !eflag\n"
-        + "   }\n"
-        + "   transition t_event(t) { do log(\"Self Transition in TESTSELF\");} select TESTSELF\n"     // does not execute entry {}, overrides global t_event()
-        + "   transition b_event(eb)\n"
-        + "      if (eb == true) then { do log(\"Local TESTSELF->INIT Transition\");} select INIT\n"
-        + "      else { log(\"Failed to select INIT upon event.\");}\n"
-        + " }\n"
-        + " final state FINI {\n"
-        + "   entry { do log(\"FINI\");}\n"
-        + " }\n"
-        + " }\n" // 40
-        + string("StateMachine X {\n") // 1
-        + " SubMachine Y y1()\n"
-        + " initial state XINIT {\n"
-        + " entry {\n"
-        + "     do y1.trace(true)\n"
-        + "     do y1.activate()\n"
-        + "     do y1.start()\n"
-        + "     do yield\n"
-        + " }\n"
-        + " run {\n"
 
-        + "     do d_event_source.write(-1.0)\n" // 11
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( !y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( y1.inState(\"ISNEGATIVE\") )\n"
-        + "     do b_event_source.write( true )\n" // go to INIT.
-        + "     do yield\n"
-        + "     do test.assert( y1.inState(\"INIT\") )\n"
-        + "     do d_event_source.write(+1.0)\n" // 21
-
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     if ( !y1.inState(\"ISPOSITIVE\") ) then\n"
-        + "          do test.assertMsg( false, \"Not ISNEGATIVE but \" + y1.getState() )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do b_event_source.write( true )\n" // go to INIT.
-        + "     do yield\n"
-        + "     do test.assert( y1.inState(\"INIT\") )\n" // 31
-#ifdef ORO_SIGNALLING_OPERATIONS
-        // test operation
-        + "     do d_event_source.write(+1.0)\n"
-
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     if ( !y1.inState(\"ISPOSITIVE\") ) then\n"
-        + "          do test.assertMsg( false, \"Not ISPOSITIVE but \" + y1.getState() )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do o_event( 3.0 )\n" // go to INIT.
-        + "     do yield\n"
-        + "     do yield\n"
-        + "     do yield\n"
-        + "     do test.assert( y1.inState(\"INIT\") )\n"
-#endif
-        // test self transitions
-        + "     set y1.eflag = true;\n"
-        + "     do t_event_source.write(1)\n"
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( !y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     do test.assert( y1.inState(\"TESTSELF\") )\n"
-        + "     do test.assert( y1.eflag == false ) /* first */\n"
-        + "     do t_event_source.write(1)\n"
-        + "     do nothing\n"
-        + "     do test.assert( y1.inState(\"TESTSELF\") )\n"
-        + "     do test.assert( y1.eflag == false ) /* second */\n" // no entry
-        + "     do log(\"Trigger b_event.\");\n"
-        + "     do b_event_source.write(true);\n"
-        + "     yield;\n"
-        + "     do test.assert( y1.inState(\"INIT\") ) /* last */\n"
-        + " }\n"
-        + " transitions {\n"
-        + "     select XFINI\n"
-        + " }\n"
-        + " }\n"
-        + " final state XFINI {\n"
-        + " entry {\n"
-        + "     do y1.deactivate()\n"
-        //+ "     do test.assert(false)\n"
-        + " }\n"
-        + " transitions {\n"
-        + "     select XINIT\n"
-        + " }\n"
-        + " }\n"
-        + " }\n"
-        + " RootMachine X x() \n" // instantiate a hierarchical SC
-        ;
-
-     this->doState("x", prog, tc );
-     //BOOST_CHECK( tc->engine()->states()->getStateMachine( "x" )->inState("FINI") );
-     this->finishState( "x", tc);
+BOOST_AUTO_TEST_CASE(testStateLevelEvents)
+{
+    // Version counters distinguish changed state from a retained level. All
+    // conditions observe values; evaluating a guard never consumes a channel.
+    double stateValue = 0.0;
+    int stateVersion = 0, tickVersion = 0;
+    bool resetLevel = false;
+    tc->addAttribute("StateValue", stateValue);
+    tc->addAttribute("StateVersion", stateVersion);
+    tc->addAttribute("TickVersion", tickVersion);
+    tc->addAttribute("ResetLevel", resetLevel);
+    var_i = 0;
+    const std::string program = R"ops(
+StateMachine Y {
+    var Int32 seenState = 0, seenTick = 0
+    transition if StateVersion != seenState && StateValue < 0.0
+        then { seenState = StateVersion; } select NEGATIVE
+    transition if StateVersion != seenState && StateValue >= 0.0
+        then { seenState = StateVersion; } select POSITIVE
+    transition if TickVersion != seenTick
+        then { seenTick = TickVersion; } select SELF
+    initial state INIT {}
+    state NEGATIVE { transition if ResetLevel select INIT }
+    state POSITIVE { transition if ResetLevel select INIT }
+    state SELF {
+        entry { tvar_i = tvar_i + 1 }
+        transition if TickVersion != seenTick then { seenTick = TickVersion; } select SELF
+        transition if ResetLevel select INIT
+    }
+    final state FINI {}
+}
+StateMachine X {
+    SubMachine Y y()
+    initial state INIT { entry { do y.activate(); do y.start(); yield; } }
+    final state FINI { entry { do y.deactivate(); } }
+}
+RootMachine X x()
+)ops";
+    parseState(program, tc);
+    runState("x", tc, false, true, 5);
+    StateMachinePtr child = sa->getStateMachine("x")->getChildren().front();
+    BOOST_REQUIRE(child->inState("INIT"));
+    stateValue = -1.0; ++stateVersion;
+    BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("NEGATIVE"));
+    resetLevel = true;
+    BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("INIT"));
+    stateValue = 1.0; ++stateVersion;
+    BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("INIT")); // The retained reset level still applies.
+    resetLevel = false; ++stateVersion;
+    BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("POSITIVE"));
+    ++tickVersion; BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("SELF")); BOOST_CHECK_EQUAL(var_i, 1);
+    ++tickVersion; BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("SELF")); BOOST_CHECK_EQUAL(var_i, 1);
+    resetLevel = true; BOOST_REQUIRE(SimulationThread::Instance()->run(5));
+    BOOST_CHECK(child->inState("INIT"));
+    checkState("x", tc); finishState("x", tc);
 }
 
-
-BOOST_AUTO_TEST_CASE( testStateLevelEvents)
+BOOST_AUTO_TEST_CASE(testLegacyPortEventsHaveExplicitDiagnostic)
 {
-    // test event reception in sub states.
-    string prog = string("StateMachine Y {\n")
-        + " var Int32 t = 0\n"
-        + " var Float64 et_global = 0.0, et_local = 0.0\n"
-        + " var Bool eb = false\n"
-        + " var Bool eflag = false\n"
-        + " transition if ( t_event.read(t) == NewData && t == 1 ) then { do log(\"Global Transition to TESTSELF\");} select TESTSELF\n" // test self transition
-        + " transition d_event(et_global) if ( et_global < 0.) then \n"
-        + "     { do log(\"Global ISNEGATIVE Transition\");} select ISNEGATIVE\n"
-        + "     else { do log(\"Global ISPOSITIVE Transition\");} select ISPOSITIVE\n"
-        + " initial state INIT {\n"
-        + "   entry { do log(\"INIT\"); set eb = false; }\n"
-        + " }\n"
-        + " state ISNEGATIVE {\n"
-        + "   entry { do log(\"ISNEGATIVE\");}\n"
-        + "   transition if ( b_event.read(eb) != NoData && eb )\n" // once eb is true (or was true already), transition
-        + "      then { do log(\"Local ISNEGATIVE->INIT Transition\");} select INIT\n"
-        + " }\n"
-        + " state ISPOSITIVE {\n"
-        + "   entry { do log(\"ISPOSITIVE\");}\n"
-        + "   transition if ( b_event.read(eb) != NoData && eb == true) \n" // 20
-        + "      then { do log(\"Local ISPOSITIVE->INIT Transition for b_event\");} select INIT\n"
-#ifdef ORO_SIGNALLING_OPERATIONS
-        + "   transition o_event(et_local) if ( et_local == 3.0)\n"
-        + "      then { do log(\"Local ISPOSITIVE->INIT Transition for o_event == \" + et_local);} select INIT\n"
-        + "      else { do log(\"Local ISPOSITIVE->INIT Transition FAILED for o_event == \" + et_local);}\n"
-#endif
-        + " }\n"
-        + " state TESTSELF {\n"
-        + "   entry {\n"
-        + "      do log(\"TESTSELF\");\n"
-        + "      set eflag = !eflag\n"
-        + "   }\n"
-        + "   transition if ( t_event.read(t) == NewData ) { do log(\"Self Transition in TESTSELF\");} select TESTSELF\n"     // does not execute entry {}, overrides global t_event()
-        + "   transition if ( b_event.read(eb) == NewData && eb == true )\n"
-        + "      then { do log(\"Local TESTSELF->INIT Transition\");} select INIT\n"
-        + "      else { log(\"Failed to select INIT upon event.\");}\n"
-        + " }\n"
-        + " final state FINI {\n"
-        + "   entry { do log(\"FINI\");}\n"
-        + " }\n"
-        + " }\n" // 40
-        + string("StateMachine X {\n") // 1
-        + " SubMachine Y y1()\n"
-        + " initial state INIT {\n"
-        + " entry {\n"
-        + "     do y1.trace(true)\n"
-        + "     do y1.activate()\n"
-        + "     do y1.start()\n"
-        + "     do yield\n"
-        + " }"
-        + " run {\n"
-
-        + "     do d_event_source.write(-1.0)\n" // 11
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( !y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( y1.inState(\"ISNEGATIVE\") )\n"
-        + "     do b_event_source.write( true )\n" // go to INIT.
-        + "     do yield\n"
-        + "     do test.assert( y1.inState(\"INIT\") )\n"
-        + "     do b_event_source.write( false )\n" // clear the b_event for level sake
-
-        + "     do d_event_source.write(+1.0)\n"
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"//21
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     if ( !y1.inState(\"ISPOSITIVE\") ) then\n"
-        + "          do test.assertMsg( false, \"Not ISNEGATIVE but \" + y1.getState() )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do b_event_source.write( true )\n" // go to INIT.
-        + "     do yield\n"
-
-        + "     do test.assert( y1.inState(\"INIT\") )\n"
-        + "     do b_event_source.write( false )\n" // clear the b_event for level sake
-#ifdef ORO_SIGNALLING_OPERATIONS
-        // test operation
-        + "     do d_event_source.write(+1.0)\n"
-        + "     do nothing\n" // 31
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     if ( !y1.inState(\"ISPOSITIVE\") ) then\n"
-        + "          do test.assertMsg( false, \"Not ISPOSITIVE but \" + y1.getState() )\n"
-        + "     do test.assert( y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do o_event( 3.0 )\n" // go to INIT.
-        + "     do yield\n"
-        + "     do yield\n" // 40
-        + "     do yield\n"
-        + "     do test.assert( y1.inState(\"INIT\") )\n"
-#endif
-        // test self transitions
-        + "     set y1.eflag = true;\n"
-        + "     do t_event_source.write(1)\n"
-        + "     do nothing\n"
-        + "     do test.assert( !y1.inState(\"INIT\") )\n"
-        + "     do test.assert( !y1.inState(\"ISPOSITIVE\") )\n"
-        + "     do test.assert( !y1.inState(\"ISNEGATIVE\") )\n"
-        + "     do test.assert( y1.inState(\"TESTSELF\") )\n"
-        + "     do test.assert( y1.eflag == false ) /* first */\n"
-        + "     do t_event_source.write(1)\n"
-        + "     do nothing\n"
-        + "     do test.assert( y1.inState(\"TESTSELF\") )\n"
-        + "     do test.assert( y1.eflag == false ) /* second */\n" // no entry
-        + "     do log(\"Trigger b_event.\");\n"
-        + "     do b_event_source.write(true);\n"
-        + "     yield;\n"
-        + "     do test.assert( y1.inState(\"INIT\") ) /* last */\n"
-        + " }\n"
-        + " transitions {\n"
-        + "     select FINI\n"
-        + " }\n"
-        + " }\n"
-        + " final state FINI {\n"
-        + " entry {\n"
-        + "     do y1.deactivate()\n"
-        //+ "     do test.assert(false)\n"
-        + " }\n"
-        + " transitions {\n"
-        + "     select INIT\n"
-        + " }\n"
-        + " }\n"
-        + " }\n"
-        + " RootMachine X x() \n" // instantiate a hierarchical SC
-        ;
-
-     this->doState("x", prog, tc, true, 100 );
-     //BOOST_CHECK( tc->engine()->states()->getStateMachine( "x" )->inState("FINI") );
-     this->finishState( "x", tc);
+    const std::string program = R"ops(
+StateMachine Legacy {
+    var Float64 value = 0.0
+    transition d_event(value) select FINI
+    initial state INIT {}
+    final state FINI {}
+}
+RootMachine Legacy legacy()
+)ops";
+    bool rejected = false;
+    try { sa->loadStateMachines(program, "legacy_port_event.ops", true); }
+    catch (const file_parse_exception& error) {
+        rejected = true;
+        BOOST_CHECK_MESSAGE(error.what().find("Cyclic state ports do not emit events") != std::string::npos, error.what());
+    }
+    BOOST_CHECK(rejected);
 }
 
 BOOST_AUTO_TEST_CASE( testSelfDeactivatingStateMachineinEntry )

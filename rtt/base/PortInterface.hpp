@@ -45,12 +45,14 @@
 #include "../internal/ConnectionManager.hpp"
 #include "../internal/ConnID.hpp"
 #include "ChannelElementBase.hpp"
+#include "DataSourceBase.hpp"
 #include "../types/rtt-types-fwd.hpp"
 #include "../os/Mutex.hpp"
 #include "../rtt-fwd.hpp"
 
 namespace RTT
-{ namespace base {
+{ namespace internal { class CyclicDataFlow; class PortDataAccess; }
+namespace base {
 
     /**
      * The base class of every data flow port.
@@ -58,9 +60,12 @@ namespace RTT
      */
     class RTT_API PortInterface
     {
+        friend class internal::PortDataAccess;
+        base::DataSourceBase::shared_ptr observation_source;
         std::string name;
         std::string fullName;
         std::string mdesc;
+        std::vector<internal::CyclicDataFlow*> cyclicDependencies;
 
         void updateFullName();
 
@@ -76,6 +81,17 @@ namespace RTT
 
     public:
         virtual ~PortInterface();
+
+        // Runtime topology protocol. Typed port destructors call this before
+        // their images disappear; it synchronizes affected component activities.
+        bool connectionChangeAllowed() const;
+        bool validateWholeConnection(PortInterface& other) const;
+        bool prepareConnectionChange();
+        bool disconnectMemberConnections(PortInterface* other = 0);
+        bool hasMemberConnections() const;
+        void preparePortDestruction();
+        void addCyclicDependency(internal::CyclicDataFlow*);
+        void removeCyclicDependency(internal::CyclicDataFlow*);
 
         /**
          * Returns the identity of this port in a ConnID object.
@@ -160,11 +176,8 @@ namespace RTT
          */
         virtual PortInterface* antiClone() const = 0;
 
-        /**
-         * Create accessor Object for this Port, for addition to a
-         * TaskContext Object interface.
-         */
-        virtual Service* createPortObject();
+        /** Create an independent passive observation, including transport overrides. */
+        base::DataSourceBase::shared_ptr getObservationDataSource() const;
 
         /** Connects this port with \a other, using the given policy. Unlike
          * OutputPortInterface::createConnection, \a other can be the write port

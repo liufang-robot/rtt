@@ -1,3 +1,5 @@
+#include "transport_test.hpp"
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: The SourceWorks  Tue Sep 7 00:54:57 CEST 2010  mqueue_ipc_server.cpp
 
@@ -65,19 +67,15 @@ MQueueTest::tearDown()
     delete mw2;
 }
 
-void MQueueTest::new_data_listener(PortInterface* port)
-{
-    signalled_port = port;
-}
 
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) \
-    signalled_port = 0; \
-    code; \
+#define WAIT_FOR_TRANSPORT(code, read_port) do { \
+    BOOST_REQUIRE_EQUAL((code), WriteSuccess); \
     rtos_disable_rt_warning(); \
     usleep(100000); \
     rtos_enable_rt_warning(); \
-    BOOST_CHECK( read_port == signalled_port );
+    BOOST_REQUIRE((read_port)->connected()); \
+} while(0)
 
 void MQueueTest::testPortDataConnection()
 {
@@ -90,24 +88,24 @@ void MQueueTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( NoData == mr2->read(value) );
+    BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr2)
-    BOOST_CHECK( mr2->read(value) );
+    // Check transport delivery after publication
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 1.0), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr2);
-    BOOST_CHECK( mr2->read(value) );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 2.0), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( OldData == mr2->read(value) );
+    BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
 }
 
-void MQueueTest::testPortBufferConnection()
+void MQueueTest::testPortLatestConnection()
 {
     rtos_enable_rt_warning();
-    // This test assumes that there is a buffer connection mw1 => mr2 of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mw1->connected() );
     BOOST_CHECK( mr2->connected() );
@@ -115,20 +113,16 @@ void MQueueTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK( NoData == mr2->read(value) );
+    BOOST_CHECK( NoData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mw1->write(1.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(2.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(3.0), mr2);
-    ASSERT_PORT_SIGNALLING(mw1->write(4.0), 0);  // because size == 3
-    BOOST_CHECK( mr2->read(value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mr2->read(value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mr2->read(value) );
-    BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK( OldData == mr2->read(value) );
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 1.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 2.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 3.0), mr2);
+    WAIT_FOR_TRANSPORT(RTT::internal::PortDataAccess::publish(*mw1, 4.0), mr2);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mr2, value, 4.0), NewData);
+    BOOST_CHECK_EQUAL( 4.0, value );
+    BOOST_CHECK( OldData == RTT::internal::PortDataAccess::receive(*mr2, value) );
 
     rtos_disable_rt_warning();
 }
@@ -157,10 +151,6 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-                boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();
@@ -189,25 +179,25 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer1";
+    //policy.name_id = "latest1";
     BOOST_CHECK( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 #endif
 #if 1
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
-    //policy.name_id = "buffer2";
+    //policy.name_id = "latest2";
     BOOST_CHECK( mw1->createConnection(*mr2, policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     //while(1) sleep(1);
     mw1->disconnect();
     mr2->disconnect();
@@ -225,16 +215,12 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-            boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();
 
 
-    // Test all four configurations of Data/Buffer & push/pull
+    // Test all four configurations of default/explicit transport capacity and push/pull
     policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.name_id = "/data1";
@@ -255,24 +241,24 @@ BOOST_AUTO_TEST_CASE( testPortStreams )
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 3;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_CHECK( mw1->createStream( policy ) );
     BOOST_CHECK( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = true;
     policy.size = 3;
     policy.name_id = "";
     BOOST_CHECK( mw1->createStream( policy ) );
     BOOST_CHECK( mr2->createStream( policy ) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     mw1->disconnect();
     mr2->disconnect();
     testPortDisconnected();
@@ -296,10 +282,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsTimeout )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "/buffer1";
+    policy.name_id = "/latest1";
     BOOST_CHECK( mr2->createStream( policy ) == false );
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
@@ -324,10 +310,10 @@ BOOST_AUTO_TEST_CASE( testPortStreamsWrongName )
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
 
-    policy.type = ConnPolicy::BUFFER;
+    policy.type = ConnPolicy::DATA;
     policy.pull = false;
     policy.size = 10;
-    policy.name_id = "buffer1";
+    policy.name_id = "latest1";
     BOOST_CHECK( mr2->createStream( policy ) == false );
     BOOST_CHECK( mr2->connected() == false );
     mr2->disconnect();
@@ -344,10 +330,6 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     policy.size = 0;
     policy.transport = ORO_MQUEUE_PROTOCOL_ID;
 
-    // Set up an event handler to check if signalling works properly as well
-    Handle hl( mr2->getNewDataOnPortEvent()->setup(
-            boost::bind(&MQueueTest::new_data_listener, this, _1) ) );
-    hl.connect();
 
     DataFlowInterface* ports  = tc->ports();
     DataFlowInterface* ports2 = t2->ports();
@@ -360,7 +342,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
 
     // init the output port with a vector of size 20, values 3.33
     vout.setDataSample( data );
-    data = vout.getLastWrittenValue();
+    data = vout.data();
     for(int i=0; i != 20; ++i)
         BOOST_CHECK_CLOSE( data[i], 3.33, 0.01);
 
@@ -371,7 +353,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     BOOST_CHECK( vin.createStream( policy ) );
 
     // check that the receiver did not get any data
-    BOOST_CHECK_EQUAL( vin.read(data), NoData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), NoData);
 
     // prepare a new data sample, size 10, values 6.66
     data.clear();
@@ -380,7 +362,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
         BOOST_CHECK_CLOSE( data[i], 6.66, 0.01);
 
     rtos_enable_rt_warning();
-    vout.write( data );
+    RTT::internal::PortDataAccess::publish(vout,  data );
     rtos_disable_rt_warning();
 
     // prepare data buffer for reception:
@@ -389,7 +371,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
     usleep(200000);
 
     rtos_enable_rt_warning();
-    BOOST_CHECK_EQUAL( vin.read(data), NewData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), NewData);
     rtos_disable_rt_warning();
 
     // check if both size and capacity and values are as expected.
@@ -399,7 +381,7 @@ BOOST_AUTO_TEST_CASE( testVectorTransport )
         BOOST_CHECK_CLOSE( data[i], 6.66, 0.01);
 
     rtos_enable_rt_warning();
-    BOOST_CHECK_EQUAL( vin.read(data), OldData);
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(vin, data), OldData);
     rtos_disable_rt_warning();
 }
 
