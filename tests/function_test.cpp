@@ -26,6 +26,11 @@
 #include <scripting/ScriptingService.hpp>
 #include <Service.hpp>
 #include <OperationCaller.hpp>
+#include <types/TemplateTypeInfo.hpp>
+
+struct QualifiedReturnValue {
+    int value = 42;
+};
 
 class FunctionsFixture : public OperationsFixture
 {
@@ -94,6 +99,26 @@ BOOST_AUTO_TEST_CASE( testSimpleReturnFunction)
 
     this->doFunction( prog, tc );
     this->finishFunction( tc, "x");
+}
+
+BOOST_AUTO_TEST_CASE( testQualifiedReturnFunction )
+{
+    if (!Types()->type("FunctionTest.Result"))
+        Types()->addType(new types::TemplateTypeInfo<QualifiedReturnValue>("/FunctionTest/Result"));
+    QualifiedReturnValue result;
+    result.value = 0;
+    tc->addAttribute("qualifiedResult", result);
+    const string prog =
+        "FunctionTest.Result identity(FunctionTest.Result value) {\n"
+        "  return value\n"
+        "}\n"
+        "program x {\n"
+        "  var FunctionTest.Result value\n"
+        "  qualifiedResult = identity(value)\n"
+        "}\n";
+    this->doFunction(prog, tc);
+    this->finishFunction(tc, "x");
+    BOOST_CHECK_EQUAL(result.value, 42);
 }
 
 BOOST_AUTO_TEST_CASE( testExportFunction)
