@@ -173,7 +173,8 @@ namespace RTT
     function = (
             // optional visibility qualifiers:
        !( keyword_p( "export" )[boost::bind(&ProgramGraphParser::exportdef, this)] | keyword_p( "global" )[boost::bind(&ProgramGraphParser::globaldef, this)] | keyword_p("local") )[boost::bind(&ProgramGraphParser::seenvalidinput, this)]
-       >> (keyword_p( "function" )[boost::bind(&ProgramGraphParser::seenvalidinput, this)] | commonparser.notassertingidentifier[boost::bind( &ProgramGraphParser::seenreturntype, this, _1, _2)] )
+       >> (keyword_p( "function" )[boost::bind(&ProgramGraphParser::seenvalidinput, this)]
+           | (commonparser.type_name >> !str_p("[]"))[boost::bind( &ProgramGraphParser::seenreturntype, this, _1, _2)] )
        >> expect_ident( commonparser.identifier[boost::bind(&ProgramGraphParser::seenvalidinput, this)][ boost::bind( &ProgramGraphParser::functiondef, this, _1, _2 ) ] )
        >> !funcargs
        >> opencurly
