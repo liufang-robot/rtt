@@ -88,7 +88,7 @@ SharedConnectionBase::SharedConnectionBase(const ConnPolicy &policy)
 
     Logger::log().logf(Logger::Debug, "SharedConnection",
                        "Constructed shared %s connection '%s'.",
-                       policy.type == ConnPolicy::DATA ? "data" : (policy.type == ConnPolicy::BUFFER ? "buffer" : ""),
+                       policy.type == ConnPolicy::DATA ? "data" : "invalid",
                        getName().c_str());
 }
 

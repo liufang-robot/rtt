@@ -391,15 +391,6 @@ namespace RTT
         curstate = 0;
         curinitialstateflag = false;
         curfinalstateflag = false;
-        // clear all port-triggered transitions for this state.
-        for (std::map<std::string,ConditionCache*>::iterator i = cur_port_events.begin();
-            i != cur_port_events.end(); ++i )
-          delete i->second;
-        cur_port_events.clear();
-        for (std::map<std::string,ConditionCache*>::iterator i = global_port_events.begin();
-            i != global_port_events.end(); ++i )
-          delete i->second;
-        global_port_events.clear();
     }
 
     void StateGraphParser::inprogram(const std::string& name)
@@ -483,22 +474,15 @@ namespace RTT
         peer    = peerparser->taskObject();
         peerparser->reset();
 
-        // check if it's an operation:
-        if (peer->hasOperation(evname) ) {
-            argsparser =
-                new ArgumentsParser( *expressionparser, context, peer->provides(),
-                                     evname, "callback" );
+        if (peer->hasOperation(evname)) {
+            argsparser = new ArgumentsParser(*expressionparser, context, peer->provides(), evname, "callback");
         } else {
-            // check if it's a port.
-            if ( peer->hasService(evname) == false || peer->getService(evname)->hasOperation("read") == false) {
-                if (curstate)
-                    ORO_THROW( parse_exception_fatal_semantic_error("In state "+curstate->getName()+": InputPort or Operation "+evname+" not found in Task "+peer->getName() ));
-                else
-                    ORO_THROW( parse_exception_fatal_semantic_error("In statemachine: InputPort or Operation "+evname+" not found in Task "+peer->getName() ));
-            }
-            argsparser =
-                new ArgumentsParser( *expressionparser, context, peer->getService(evname),
-                                     evname, "read" );
+            if (peer->getPort(evname))
+                ORO_THROW(parse_exception_fatal_semantic_error(
+                    "Cyclic state ports do not emit events: " + evname +
+                    ". Use state conditions or a signalling operation for discrete events."));
+            ORO_THROW(parse_exception_fatal_semantic_error(
+                "Event operation " + evname + " not found in Task " + peer->getName()));
         }
 
         argslist = argsparser->parser();
@@ -549,50 +533,6 @@ namespace RTT
         if (evname.empty()) {
             if (curcondition == 0)
                 curcondition = new ConditionTrue;
-        } else if ( peer->hasService(evname) && peer->getService(evname)->hasOperation("read") ) { // is a port
-            try {
-                assert(peer->hasService(evname)); // checked in seeneventname()
-                ConditionInterface* evcondition = 0;
-                if ( global_port_events.count(evname) ){
-                    // clone the cached condition in order to avoid a second read on the port.
-                    evcondition = new ConditionBoolDataSource( global_port_events[evname]->getResult().get() );
-                } else
-                if ( cur_port_events.count(evname) ){
-                    // clone the cached condition in order to avoid a second read on the port.
-                    evcondition = new ConditionBoolDataSource( cur_port_events[evname]->getResult().get() );
-                } else {
-                    // combine the implicit 'read(arg) == NewData' with the guard, if any.
-                    DataSourceBase::shared_ptr read_dsb = peer->getService(evname)->produce("read", evargs, context->engine() );
-                    DataSource<FlowStatus>* read_ds = dynamic_cast<DataSource<FlowStatus>*>(read_dsb.get());
-                    assert(read_ds);
-                    evcondition = new ConditionCompare<FlowStatus,std::equal_to<FlowStatus> >( new ConstantDataSource<FlowStatus>(NewData), read_ds );
-                    if (curstate) {
-                        cur_port_events[evname] = new ConditionCache( evcondition ); // caches result until reset().
-                        evcondition = cur_port_events[evname]->clone();
-                    } else {
-                        //global event:
-                        global_port_events[evname] = new ConditionCache( evcondition ); // caches result until reset().
-                        evcondition = global_port_events[evname]->clone();
-                    }
-                }
-                if (curcondition == 0) {
-                    curcondition = evcondition;
-                } else {
-                    curcondition = new ConditionBinaryCompositeAND( evcondition, curcondition );
-                }
-            }
-            catch( const wrong_number_of_args_exception& e )
-                {
-                    throw parse_exception_wrong_number_of_arguments
-                        ( peer->getName(), evname + ".read", e.wanted, e.received );
-                }
-            catch( const wrong_types_of_args_exception& e )
-                {
-                    throw parse_exception_wrong_type_of_argument
-                        ( peer->getName(), evname + ".read", e.whicharg, e.expected_, e.received_ );
-                }
-            elsestate = 0;
-            elseProgram.reset();
         } else { // is an operation
             assert( peer->provides()->hasMember(evname) );
             bool res;
@@ -879,14 +819,6 @@ namespace RTT
               i != machinebuilders.end(); ++i )
           delete i->second;
         machinebuilders.clear();
-        for (std::map<std::string,ConditionCache*>::iterator i = cur_port_events.begin();
-            i != cur_port_events.end(); ++i )
-          delete i->second;
-        cur_port_events.clear();
-        for (std::map<std::string,ConditionCache*>::iterator i = global_port_events.begin();
-            i != global_port_events.end(); ++i )
-          delete i->second;
-        global_port_events.clear();
     }
 
     void StateGraphParser::seenstatemachinename( iter_t begin, iter_t end ) {

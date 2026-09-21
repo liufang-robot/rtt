@@ -67,6 +67,7 @@ namespace RTT
           typedef T UserType;
 
           virtual base::ChannelElementBase::shared_ptr createStream(base::PortInterface* port, const ConnPolicy& policy, bool is_sender) const {
+              if (!policy.validType() || (!is_sender && policy.type != ConnPolicy::DATA)) return {};
               try {
                   base::ChannelElementBase::shared_ptr mq = new MQChannelElement<T>(port, *this, policy, is_sender);
                   if ( !is_sender && (policy.pull == ConnPolicy::PULL) ) {

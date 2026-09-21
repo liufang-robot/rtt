@@ -65,6 +65,7 @@ namespace RTT
         TaskContext* context;
         TaskContext* _peer;
         bool mfullpath, mfoundpath;
+        bool stop_at_port = false;
         RTT_HIDE void done();
 
         RTT_HIDE void seenobjectname( iter_t begin, iter_t end );
@@ -79,6 +80,7 @@ namespace RTT
         boost::iterator_difference<iter_t>::type advance_on_error;
         RTT_HIDE error_status<> handle_no_peer(scanner_t const& scan, parser_error<PeerErrors, iter_t>&e );
     public:
+        void stopAtPort(bool value) { stop_at_port = value; }
         /**
          * Create a PeerParser which starts looking for peers from
          * a task.

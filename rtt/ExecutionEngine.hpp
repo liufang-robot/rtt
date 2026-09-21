@@ -105,15 +105,6 @@ namespace RTT
         virtual bool process(base::DisposableInterface* c);
 
         /**
-         * Queue and execute (process) a given port callback. The port callback is
-         * executed in step() or loop() directly after the queued messages.
-         *
-         * @return true if the port callback got accepted, false otherwise.
-         * @return false if the engine does not accept messages.
-         */
-        virtual bool process(base::PortInterface* port);
-
-        /**
          * Run a given function in step() or loop(). The function may only
          * be destroyed after the
          * ExecutionEngine is stopped or removeFunction() was invoked. The number of functions the Processor can
@@ -214,11 +205,6 @@ namespace RTT
         internal::MWSRQueue<base::DisposableInterface*>* mqueue;
 
         /**
-         * The port callback queue
-         */
-        internal::MWSRQueue<base::PortInterface*>* port_queue;
-
-        /**
          * Stores all functions we're executing.
          */
         internal::MWSRQueue<base::ExecutableInterface*>* f_queue;
@@ -227,7 +213,6 @@ namespace RTT
         os::Condition msg_cond;
 
         void processMessages();
-        void processPortCallbacks();
         void processFunctions();
         void processHooks();
 

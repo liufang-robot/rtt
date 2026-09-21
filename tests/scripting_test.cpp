@@ -27,6 +27,9 @@
 #include <scripting/Parser.hpp>
 #include <scripting/CommonParser.hpp>
 #include <scripting/ExpressionParser.hpp>
+#include <scripting/CallFunction.hpp>
+#include <scripting/CommandNOP.hpp>
+#include <scripting/FunctionGraph.hpp>
 #include <internal/GlobalService.hpp>
 #include <types/StructTypeInfo.hpp>
 #include <types/CArrayTypeInfo.hpp>
@@ -716,6 +719,43 @@ BOOST_AUTO_TEST_CASE(TestScriptingFunction)
 
     BOOST_REQUIRE( sc->eval("gfunc1()") );
     BOOST_CHECK_EQUAL( i, 14);
+}
+
+BOOST_AUTO_TEST_CASE(TestFunctionYieldBeforeEnqueueReturns,
+                     *boost::unit_test::timeout(2))
+{
+    // Complete the callback before process() returns, deterministically
+    // reproducing an executor that outruns the calling thread.
+    struct ImmediateEngine : ExecutionEngine {
+        ImmediateEngine() : ExecutionEngine(nullptr), continuations(0) {}
+        int continuations;
+        bool process(base::DisposableInterface* message) override {
+            message->executeAndDispose();
+            return true;
+        }
+        bool runFunction(base::ExecutableInterface* function) override {
+            ++continuations;
+            const bool again = function->execute();
+            if (!again) function->unloaded();
+            return !again;
+        }
+    } engine;
+    struct YieldOnce : scripting::FunctionGraph {
+        YieldOnce() : FunctionGraph("yield_once", true), executions(0) { finish(); }
+        int executions;
+        bool execute() override {
+            if (++executions == 1) return true;
+            stop();
+            return false;
+        }
+    };
+    boost::shared_ptr<YieldOnce> function(new YieldOnce);
+    scripting::CallFunction call(new scripting::CommandNOP, function, &engine, nullptr);
+
+    BOOST_REQUIRE(call.execute());
+    BOOST_CHECK_EQUAL(function->executions, 2);
+    BOOST_CHECK_EQUAL(engine.continuations, 1);
+    BOOST_CHECK(function->isStopped());
 }
 
 BOOST_AUTO_TEST_CASE(TestScriptingFunctionWithYield)

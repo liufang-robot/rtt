@@ -72,7 +72,6 @@ ENDIF (OROSEM_REMOTE_LOGGING AND NOT OROBLD_DISABLE_LOGGING)
 
 ### Execution Engine
 OPTION(OROPKG_EXECUTION_ADVANCED "Advanced Execution Engine configuration" OFF)
-CMAKE_DEPENDENT_OPTION(OROPKG_EXECUTION_ENGINE_EVENTS "Enable Event Processing." ON "OROPKG_EXECUTION_ADVANCED" ON)
 CMAKE_DEPENDENT_OPTION(OROPKG_EXECUTION_ENGINE_COMMANDS "Enable Command Processing." ON "OROPKG_EXECUTION_ADVANCED" ON)
 CMAKE_DEPENDENT_OPTION(OROPKG_EXECUTION_ENGINE_PROGRAMS "Enable Program Processing." ON "OROPKG_EXECUTION_ADVANCED" ON)
 CMAKE_DEPENDENT_OPTION(OROPKG_EXECUTION_ENGINE_STATEMACHINES "Enable Statemachine Processing." ON "OROPKG_EXECUTION_ADVANCED" ON)
@@ -136,7 +135,6 @@ ENDIF (OS_RT_MALLOC )
 
 ### Use of Signal Class:
 OPTION(ORO_SIGNALLING_OPERATIONS "Enable the signal function of operations. scripting::StateMachine needs this for responding to operations in combination with addEventOperation()" ON)
-OPTION(ORO_SIGNALLING_PORTS "Enable the signal callback mechanism on ports. Enable if you want to attach multiple callbacks to flow ports." OFF)
 
 ###
 #   Collect Sources:

@@ -42,6 +42,7 @@
 #include "../base/ChannelElement.hpp"
 #include "../base/DataObjectInterface.hpp"
 #include "../ConnPolicy.hpp"
+#include <atomic>
 
 namespace RTT { namespace internal {
 
@@ -52,6 +53,9 @@ namespace RTT { namespace internal {
     {
         typename base::DataObjectInterface<T>::shared_ptr data;
         const ConnPolicy policy;
+        const bool independent_readers;
+        std::atomic<std::uint64_t> revision{0};
+        std::atomic<bool> available{false};
 
     public:
         typedef typename base::ChannelElement<T>::value_t value_t;
@@ -59,13 +63,18 @@ namespace RTT { namespace internal {
         typedef typename base::ChannelElement<T>::reference_t reference_t;
 
         ChannelDataElement(typename base::DataObjectInterface<T>::shared_ptr sample, const ConnPolicy& policy = ConnPolicy())
-            : data(sample), policy(policy) {}
+            : data(sample), policy(policy),
+              independent_readers(policy.buffer_policy == Shared || policy.buffer_policy == PerOutputPort) {}
 
         /** Update the data sample stored in this element.
          * It always returns true. */
         virtual WriteStatus write(param_t sample)
         {
             if (!data->Set(sample)) return WriteFailure;
+            if (independent_readers) {
+                revision.fetch_add(1, std::memory_order_release);
+                available.store(true, std::memory_order_release);
+            }
             return this->signal() ? WriteSuccess : NotConnected;
         }
 
@@ -78,18 +87,37 @@ namespace RTT { namespace internal {
             return data->Get(sample, copy_old_data);
         }
 
+        virtual FlowStatus readWithCursor(reference_t sample, ChannelReadCursor& cursor,
+                                          bool copy_old_data = true)
+        {
+            if (!independent_readers) return read(sample, copy_old_data);
+            // Capture before copying, as with PortSnapshotSource. A publication
+            // concurrent with this read may be deferred or reported twice, but
+            // advancing the cursor can never consume a sample not yet copied.
+            const auto observed = revision.load(std::memory_order_acquire);
+            if (!available.load(std::memory_order_acquire)) return NoData;
+            const bool changed = cursor.storage.get() != this || cursor.revision != observed;
+            if (!changed && !copy_old_data) return OldData;
+            if (data->Get(sample, true) == NoData) return NoData;
+            if (cursor.storage.get() != this) cursor.storage = this;
+            cursor.revision = observed;
+            return changed ? NewData : OldData;
+        }
+
         /** Resets the stored sample. After clear() has been called, read()
          * returns false
          */
         virtual void clear()
         {
             data->clear();
+            if (independent_readers) available.store(false, std::memory_order_release);
             base::ChannelElement<T>::clear();
         }
 
         virtual WriteStatus data_sample(param_t sample, bool reset = true)
         {
             if (!data->data_sample(sample, reset)) return WriteFailure;
+            if (independent_readers && reset) available.store(false, std::memory_order_release);
             return base::ChannelElement<T>::data_sample(sample, reset);
         }
 
@@ -113,4 +141,3 @@ namespace RTT { namespace internal {
 }}
 
 #endif
-

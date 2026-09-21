@@ -36,38 +36,22 @@
 namespace RTT {
 
     /**
-     * The BufferPolicy controls how multiple connections to the
-     * same input or output port are handled in case of concurrent or subsequent read
-     * and write operations.
+     * Storage placement for latest-value DATA connections. The historical name
+     * does not enable FIFO data ports. TaskContext-owned cyclic inputs accept
+     * only one whole writer; unregistered transport endpoints may have several.
      *
-     * Possible values:
+     * - PerConnection: each port pair/stream owns its data object. An unregistered
+     *   input with several writers checks its previous source before other sources.
+     * - PerInputPort: one data object is shared by the input's sources. Remote
+     *   input streams require pull == false.
+     * - PerOutputPort: readers share the output's data object. Remote output
+     *   streams require pull == true.
+     * - Shared: ports share one data object. At most one writer may feed the group
+     *   if it contains a TaskContext-owned input. Several readers can attach.
      *
-     * - PerConnection:
-     *   Buffers (or data objects) will be installed per connection
-     *   (per pair of output and input port/stream). Input ports with multiple
-     *   connections first try to read from the last read channel first, then
-     *   poll all connections in the order they have been made (which in practice
-     *   means there are no guarantees on the order if multiple writers write
-     *   concurrently). This is the default buffer policy.
-     *
-     * - PerInputPort:
-     *   Every input port has a single input buffer (or data object) and all
-     *   connected output ports/streams will write to the same buffer. This
-     *   policy requires that pull == false for remote connections or input streams.
-     *
-     * - PerOutputPort:
-     *   Every output has a single output buffer (or data object) and all connected
-     *   readers "consume" elements from this buffer. Exactly one connected input port
-     *   or output stream will see every written sample as NewData. This policy
-     *   requires that pull == true for remote connections or output streams.
-     *
-     * - Shared:
-     *   The buffer (or data object) is shared between all connected input and output
-     *   ports. It can have an arbitrary number of writers and readers. Ports can be
-     *   connected to an existing shared connection instance either by connecting it
-     *   to a port that is already part of the shared connection group, or with a special
-     *   createConnection() method. This was the default buffer policy in the days of
-     *   RTT v1.
+     * Cyclic inputs track freshness independently, including shared storage:
+     * preparing one input does not consume another input's next NewData update.
+     * Low-level channel reads retain their shared freshness semantics.
      *
      * @ingroup Ports
      */

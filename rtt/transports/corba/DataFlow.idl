@@ -12,7 +12,10 @@ module RTT
   {
     enum CFlowStatus { CNoData, COldData, CNewData };
     enum CWriteStatus { CWriteSuccess, CWriteFailure, CNotConnected };
-    enum CConnectionModel { CData, CBuffer, CCircularBuffer };
+    // Numeric values match RTT; FIFO kinds 1 and 2 are no longer accepted.
+    typedef long CConnectionModel;
+    const CConnectionModel CUnbuffered = -1;
+    const CConnectionModel CData = 0;
     enum CLockPolicy { CUnsync, CLocked, CLockFree };
     enum CBufferPolicy { CBufferPolicyUnspecified, CPerConnection, CPerInputPort, CPerOutputPort, CShared };
     struct CConnPolicy

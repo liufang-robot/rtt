@@ -47,6 +47,7 @@
 
 RTT::corba::CConnPolicy toCORBA(RTT::ConnPolicy const& policy)
 {
+    if (!policy.validType()) throw CORBA::BAD_PARAM();
     RTT::corba::CConnPolicy corba_policy;
     corba_policy.type          = RTT::corba::CConnectionModel(policy.type);
     corba_policy.size          = policy.size;
@@ -66,6 +67,7 @@ RTT::ConnPolicy toRTT(RTT::corba::CConnPolicy const& corba_policy)
 {
     RTT::ConnPolicy policy;
     policy.type          = corba_policy.type;
+    if (!policy.validType()) throw CORBA::BAD_PARAM();
     policy.size          = corba_policy.size;
     policy.lock_policy   = corba_policy.lock_policy;
     policy.init          = corba_policy.init;

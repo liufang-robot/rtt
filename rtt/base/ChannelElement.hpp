@@ -44,6 +44,7 @@
 #include "ChannelElementBase.hpp"
 #include "../ConnPolicy.hpp"
 #include "../FlowStatus.hpp"
+#include "../internal/ChannelReadCursor.hpp"
 #include "../os/MutexLock.hpp"
 
 #include <boost/bind/bind.hpp>
@@ -125,6 +126,14 @@ namespace RTT { namespace base {
             else
                 return NoData;
         }
+
+        /** Internal cyclic read with independent shared-storage freshness.
+         * Custom channel readers retain their existing read implementation. */
+        virtual FlowStatus readWithCursor(reference_t sample, internal::ChannelReadCursor&,
+                                          bool copy_old_data = true)
+        {
+            return read(sample, copy_old_data);
+        }
     };
 
     /** A typed version of MultipleInputsChannelElementBase.
@@ -168,6 +177,22 @@ namespace RTT { namespace base {
             // read and iterate if necessary.
             select_reader_channel( boost::bind( &MultipleInputsChannelElement<T>::do_read, this, boost::ref(sample), boost::ref(result), _1, _2), copy_old_data );
             return result;
+        }
+
+        virtual FlowStatus readWithCursor(reference_t sample, internal::ChannelReadCursor& cursor,
+                                          bool copy_old_data = true)
+        {
+            RTT::os::SharedMutexLock lock(inputs_lock);
+            // Owned cyclic inputs have one whole writer. Preserve the existing
+            // selection policy for unowned runtime inputs with several channels.
+            if (inputs.size() > 1) {
+                FlowStatus result = NoData;
+                select_reader_channel(boost::bind(&MultipleInputsChannelElement<T>::do_read,
+                    this, boost::ref(sample), boost::ref(result), _1, _2), copy_old_data);
+                return result;
+            }
+            typename ChannelElement<T>::shared_ptr input = currentInput();
+            return input ? input->readWithCursor(sample, cursor, copy_old_data) : NoData;
         }
 
     private:
@@ -260,6 +285,14 @@ namespace RTT { namespace base {
         typedef typename ChannelElement<T>::param_t param_t;
         typedef typename ChannelElement<T>::reference_t reference_t;
 
+        virtual FlowStatus readWithCursor(reference_t sample, internal::ChannelReadCursor& cursor,
+                                          bool copy_old_data = true)
+        {
+            typename ChannelElement<T>::shared_ptr input = ChannelElement<T>::getInput();
+            return input ? input->readWithCursor(sample, cursor, copy_old_data)
+                         : ChannelElement<T>::readWithCursor(sample, cursor, copy_old_data);
+        }
+
         virtual WriteStatus data_sample(param_t sample, bool reset = true)
         {
             WriteStatus result = WriteSuccess;
@@ -343,6 +376,12 @@ namespace RTT { namespace base {
         using MultipleOutputsChannelElement<T>::data_sample;
 
         using MultipleInputsMultipleOutputsChannelElementBase::disconnect;
+
+        virtual FlowStatus readWithCursor(typename ChannelElement<T>::reference_t sample,
+                                          internal::ChannelReadCursor& cursor, bool copy_old_data = true)
+        {
+            return MultipleInputsChannelElement<T>::readWithCursor(sample, cursor, copy_old_data);
+        }
     };
 }}
 

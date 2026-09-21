@@ -1,3 +1,5 @@
+#include "transport_test.hpp"
+#include <rtt/internal/PortDataAccess.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
 
@@ -57,8 +59,6 @@ public:
     CTaskContext_ptr s;
     CTaskContext_ptr s2;
 
-    base::PortInterface* signalled_port;
-    void new_data_listener(base::PortInterface* port);
 
     // Ports
     InputPort<double>*  mi;
@@ -72,7 +72,7 @@ public:
 
     // helper test functions
     void testPortDataConnection();
-    void testPortBufferConnection();
+    void testPortLatestConnection();
     void testPortDisconnected();
 
     void callBackPeer(TaskContext* peer, string const& opname) {
@@ -121,7 +121,7 @@ CorbaTest::setUp()
     mo = new OutputPort<double>("mo");
 
     tc =  new TaskContext( "root" );
-    tc->ports()->addEventPort( *mi,boost::bind(&CorbaTest::new_data_listener, this, _1) );
+    tc->ports()->addPort( *mi);
     tc->ports()->addPort( *mo );
 
     t2 = 0;
@@ -149,20 +149,9 @@ CorbaTest::tearDown()
     delete mo;
 }
 
-void CorbaTest::new_data_listener(base::PortInterface* port)
-{
-    signalled_port = port;
-}
 
 
-#define ASSERT_PORT_SIGNALLING(code, read_port) do { \
-    signalled_port = 0; \
-    int wait = 0; \
-    code; \
-    while (read_port != signalled_port && wait++ != 5) \
-        usleep(100000); \
-    BOOST_CHECK( read_port == signalled_port ); \
-} while(0)
+
 
 #define wait_for( cond, times ) do { \
     bool wait_for_helper; \
@@ -190,20 +179,20 @@ void CorbaTest::testPortDataConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
-    // Check if writing works (including signalling)
-    ASSERT_PORT_SIGNALLING(mo->write(1.0), mi);
-    BOOST_CHECK( mi->read(value) );
+    // Check transport delivery after publication
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 1.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 1.0, tp), NewData);
     BOOST_CHECK_EQUAL( 1.0, value );
-    ASSERT_PORT_SIGNALLING(mo->write(2.0), mi);
-    BOOST_CHECK( mi->read(value) );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 2.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 2.0, tp), NewData);
     BOOST_CHECK_EQUAL( 2.0, value );
 }
 
-void CorbaTest::testPortBufferConnection()
+void CorbaTest::testPortLatestConnection()
 {
-    // This test assumes that there is a buffer connection mo => mi of size 3
+    // Multiple publications collapse to the latest value, even with a small transport capacity.
     // Check if connection succeeded both ways:
     BOOST_CHECK( mo->connected() );
     BOOST_CHECK( mi->connected() );
@@ -211,20 +200,16 @@ void CorbaTest::testPortBufferConnection()
     double value = 0;
 
     // Check if no-data works
-    BOOST_CHECK_EQUAL( mi->read(value), NoData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), NoData );
 
     // Check if writing works
-    ASSERT_PORT_SIGNALLING(mo->write(1.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(2.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(3.0), mi);
-    ASSERT_PORT_SIGNALLING(mo->write(4.0), 0);
-    BOOST_CHECK( mi->read(value) );
-    BOOST_CHECK_EQUAL( 1.0, value );
-    BOOST_CHECK( mi->read(value) );
-    BOOST_CHECK_EQUAL( 2.0, value );
-    BOOST_CHECK( mi->read(value) );
-    BOOST_CHECK_EQUAL( 3.0, value );
-    BOOST_CHECK_EQUAL( mi->read(value), OldData );
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 1.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 2.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 3.0), WriteSuccess);
+    BOOST_REQUIRE_EQUAL(RTT::internal::PortDataAccess::publish(*mo, 4.0), WriteSuccess);
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, value, 4.0, tp), NewData);
+    BOOST_CHECK_EQUAL( 4.0, value );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi, value), OldData );
 }
 
 void CorbaTest::testPortDisconnected()
@@ -441,8 +426,6 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     BOOST_CHECK_THROW( ports->createConnection("mi", ports2, "mi", policy), CNoSuchPortException );
     BOOST_CHECK_THROW( ports->createConnection("mi", ports2, "mo", policy), CNoSuchPortException );
 
-    // must be running to catch event port signalling.
-    BOOST_CHECK( tc->start() );
     // WARNING: in the following, there is four configuration tested. There is
     // also three different ways to disconnect. We need to test those three
     // "disconnection methods", so beware when you change something ...
@@ -469,21 +452,21 @@ BOOST_AUTO_TEST_CASE( testPortConnections )
     ports2->disconnectPort("mo");
     testPortDisconnected();
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = false;
     policy.size = 3;
     BOOST_CHECK( ports->createConnection("mo", ports2, "mi", policy) );
     BOOST_CHECK( ports2->createConnection("mo", ports, "mi", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports->disconnectPort("mo");
     ports->disconnectPort("mi");
     testPortDisconnected();
 
-    policy.type = RTT::corba::CBuffer;
+    policy.type = RTT::corba::CData;
     policy.pull = true;
     BOOST_CHECK( ports->createConnection("mo", ports2, "mi", policy) );
     BOOST_CHECK( ports2->createConnection("mo", ports, "mi", policy) );
-    testPortBufferConnection();
+    testPortLatestConnection();
     ports2->disconnectPort("mo");
     ports2->disconnectPort("mi");
     testPortDisconnected();
@@ -596,14 +579,14 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     BOOST_REQUIRE( cce.in() );
 
     // Check read of new data
-    mo->write( 3.33 );
-    wait_for_equal( cce->read( sample.out(), true), CNewData, 5 );
+    RTT::internal::PortDataAccess::publish(*mo,  3.33 );
+    wait_for_equal( (stepTransportPeer(*tp), RTT::internal::PortDataAccess::receive(*cce, sample.out(), true)), CNewData, 5 );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
     // Check re-read of old data.
     sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true), COldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*cce,  sample.out(), true), COldData );
     sample >>= result;
     BOOST_CHECK_EQUAL( result, 3.33);
 
@@ -621,101 +604,13 @@ BOOST_AUTO_TEST_CASE( testDataHalfs )
     // Check read of new data
     result = 0.0;
     sample <<= 4.44;
-    cce->write( sample.in() );
-    wait_for_equal( mi->read( result ), NewData, 5 );
+    RTT::internal::PortDataAccess::publish(*cce,  sample.in() );
+    BOOST_CHECK_EQUAL(receiveTransportValue(*mi, result, 4.44, tp), NewData);
     BOOST_CHECK_EQUAL( result, 4.44 );
 
     // Check re-read of old data.
     result = 0.0;
-    BOOST_CHECK_EQUAL( mi->read( result ), OldData );
-    BOOST_CHECK_EQUAL( result, 4.44);
-}
-
-BOOST_AUTO_TEST_CASE( testBufferHalfs )
-{
-    if(std::getenv("CI") != NULL) {
-      BOOST_TEST_MESSAGE("Skipping testBufferHalfs because it can fail on integration servers.");
-      return;
-    }
-
-    double result;
-
-    // This test tests the differen port-to-port connections.
-    tp = corba::TaskContextProxy::Create( "peerBH" , /* is_ior = */ false);
-    if (!tp )
-        tp = corba::TaskContextProxy::CreateFromFile( "peerBH.ior");
-
-    BOOST_REQUIRE(tp);
-
-    s = tp->server();
-
-    // Create a default CORBA policy specification
-    RTT::corba::CConnPolicy policy = toCORBA(ConnPolicy::buffer(10));
-    policy.init = false;
-    policy.transport = ORO_CORBA_PROTOCOL_ID; // force creation of non-local connections
-
-    corba::CDataFlowInterface_var ports  = s->ports();
-    BOOST_REQUIRE( ports.in() );
-
-    // test unbuffered C++ write --> Corba read
-    policy.pull = false; // note: buildChannelInput must correct policy to pull = true (adds a buffer).
-    mo->connectTo( tp->ports()->getPort("mi"), toRTT(policy) );
-    CChannelElement_var cce = ports->buildChannelInput("mo", policy);
-    CORBA::Any_var sample;
-    BOOST_REQUIRE( cce.in() );
-
-    // Check read of new data
-    mo->write( 6.33 );
-    mo->write( 3.33 );
-    wait_for_equal( cce->read( sample.out(), true), CNewData, 10 );
-    sample >>= result;
-#ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
-    BOOST_CHECK_EQUAL( result, 6.33);
-#else
-    BOOST_CHECK( (result == 6.33) || (result == 3.33) );
-#endif
-    wait_for_equal( cce->read( sample.out(), true ), CNewData, 10 );
-    sample >>= result;
-#ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
-    BOOST_CHECK_EQUAL( result, 3.33);
-#else
-    BOOST_CHECK( (result == 6.33) || (result == 3.33) );
-#endif
-
-    // Check re-read of old data.
-    sample <<= 0.0;
-    BOOST_CHECK_EQUAL( cce->read( sample.out(), true ), COldData );
-    sample >>= result;
-#ifndef RTT_CORBA_PORTS_WRITE_ONEWAY
-    BOOST_CHECK_EQUAL( result, 3.33);
-#else
-    BOOST_CHECK( (result == 6.33) || (result == 3.33) );
-#endif
-
-    cce->disconnect();
-    mo->disconnect();
-
-    // test buffered Corba write --> C++ read
-    mi->connectTo( tp->ports()->getPort("mo"), toRTT(policy)  );
-    cce = ports->buildChannelOutput("mi", policy);
-    cce->channelReady(policy);
-    sample = new CORBA::Any();
-    BOOST_REQUIRE( cce.in() );
-
-    // Check read of new data
-    result = 0.0;
-    sample <<= 6.44;
-    cce->write( sample.in() );
-    sample <<= 4.44;
-    cce->write( sample.in() );
-    wait_for_equal( mi->read( result ), NewData, 5 );
-    BOOST_CHECK_EQUAL( result, 6.44 );
-    wait_for_equal( mi->read( result ), NewData, 5 );
-    BOOST_CHECK_EQUAL( result, 4.44 );
-
-    // Check re-read of old data.
-    result = 0.0;
-    BOOST_CHECK_EQUAL( mi->read( result ), OldData );
+    BOOST_CHECK_EQUAL( RTT::internal::PortDataAccess::receive(*mi,  result ), OldData );
     BOOST_CHECK_EQUAL( result, 4.44);
 }
 

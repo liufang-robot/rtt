@@ -1,3 +1,4 @@
+#include <rtt/extras/SequentialActivity.hpp>
 /***************************************************************************
   tag: Peter Soetens  Mon Jun 26 13:26:02 CEST 2006  generictask_test.cpp
 
@@ -54,11 +55,13 @@ public:
     int callBackPeer_count;
 
     TheServer(string name) : TaskContext(name), mi1("mi"), mo1("mo"), callBackPeer_step(INITIAL), callBackPeer_count(0) {
-        ports()->addEventPort( mi1 );
+        setActivity(new extras::SequentialActivity());
+        mTriggerOnStart = false;
+        addOperation("stepPorts", &TheServer::stepPorts, this, ClientThread);
+        ports()->addPort( mi1 );
         ports()->addPort( mo1 );
         this->createOperationCallerFactories( this );
         ts = corba::TaskContextServer::Create( this, /* use_naming = */ true );
-        this->start();
         addOperation("callBackPeer", &TheServer::callBackPeer, this,ClientThread);
         addOperation("callBackPeerOwn", &TheServer::callBackPeer, this,OwnThread);
         addOperation("resetCallBackPeer", &TheServer::resetCallBackPeer, this,OwnThread);
@@ -67,12 +70,17 @@ public:
         this->stop();
     }
 
-    void updateHook(){
-        double d = 123456.789;
-        FlowStatus fs = NoData;
-        while( (fs = mi1.read(d, false)) == NewData ) {
-            mo1.write(d);
-        }
+    // The client schedules one real component cycle, then leaves the server
+    // stopped so subsequent connection setup and disconnects remain legal.
+    bool stepPorts() {
+        if (!start()) return false;
+        const bool executed = trigger();
+        const bool stopped = stop();
+        return executed && stopped;
+    }
+
+    void updateHook() override {
+        if (mi1.status() != NoData) mo1.data() = mi1.data();
     }
 
     corba::TaskContextServer* ts;

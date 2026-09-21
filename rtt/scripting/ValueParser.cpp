@@ -38,6 +38,7 @@
 #include "parser-debug.hpp"
 #include "parse_exception.hpp"
 #include "ValueParser.hpp"
+#include "../PortEndpoint.hpp"
 #include "../Attribute.hpp"
 
 #include "../TaskContext.hpp"
@@ -58,6 +59,9 @@ namespace RTT
     ValueParser::ValueParser( TaskContext* tc, CommonParser& cp)
         : commonparser(cp), peerparser(tc,cp), propparser(cp)
   {
+#ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
+    peerparser.stopAtPort(true);
+#endif
     BOOST_SPIRIT_DEBUG_RULE( constant );
     BOOST_SPIRIT_DEBUG_RULE( const_float );
     BOOST_SPIRIT_DEBUG_RULE( const_double );
@@ -138,6 +142,12 @@ namespace RTT
         // inform propparser of new peer :
         //std::cerr << "ValueParser: seenpeer : "<< peerparser.taskObject()->getName()
         //          <<" has props :" << (peerparser.taskObject()->properties() != 0) << std::endl;
+#ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
+        if (peerparser.taskObject()->getPort(peerparser.object())) {
+            propparser.setPropertyBag(nullptr);
+            return;
+        }
+#endif
         propparser.setPropertyBag( peerparser.taskObject()->properties() );
     }
 
@@ -171,6 +181,17 @@ namespace RTT
         propparser.reset();
         return;
     }
+
+#ifndef ORO_DISABLE_PORT_DATA_SCRIPTING
+    if (task && task->getPort(name)) {
+        std::string error;
+        auto observation = PortObservation::create(PortEndpoint{task->getPort(name), ""}, &error);
+        if (!observation)
+            throw parse_exception_semantic_error("Cannot observe port " + name + ": " + error);
+        ret = observation->dataSource();
+        return;
+    }
+#endif
 
     // non-nested property or attribute case :
     if ( task && task->hasAttribute( name ) ) {

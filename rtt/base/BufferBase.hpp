@@ -65,7 +65,6 @@ namespace RTT
         public:
             Options();
             Options(bool circular); // implicit conversion from bool for backwards-compatibility only
-            Options(const ConnPolicy &policy);
             bool circular() const { return circular_; }
             Options &circular(bool value) { circular_ = value; return *this; }
             unsigned int max_threads() const { return max_threads_; }

@@ -208,6 +208,7 @@ RTT::base::ChannelElementBase::shared_ptr RemoteInputPort::buildRemoteChannelOut
 
 bool RemoteInputPort::createConnection( internal::SharedConnectionBase::shared_ptr shared_connection, ConnPolicy const& policy )
 {
+    if (policy.type != ConnPolicy::DATA) return false;
     try {
         CConnPolicy cpolicy = toCORBA(policy);
         cpolicy.name_id = CORBA::string_dup( shared_connection->getName().c_str() );
@@ -250,12 +251,6 @@ RemoteOutputPort::RemoteOutputPort(RTT::types::TypeInfo const* type_info,
     : RemotePort< RTT::base::OutputPortInterface >(type_info, dataflow, reader_port, poa)
 {}
 
-bool RemoteOutputPort::keepsLastWrittenValue() const
-{ return false; }
-
-void RemoteOutputPort::keepLastWrittenValue(bool new_flag)
-{ throw std::runtime_error("OutputPort::keepLastWrittenValue() is not supported in CORBA port proxies"); }
-
 DataSourceBase::shared_ptr RemoteOutputPort::getDataSource() const
 {
     return DataSourceBase::shared_ptr();
@@ -282,6 +277,7 @@ bool RemoteOutputPort::disconnect(PortInterface* port)
 
 bool RemoteOutputPort::createConnection( RTT::base::InputPortInterface& sink, RTT::ConnPolicy const& policy )
 {
+    if (policy.type != ConnPolicy::DATA || !sink.acceptsWholeConnection(this)) return false;
     try {
         CConnPolicy cpolicy = toCORBA(policy);
         // first check if we're connecting to another remote:

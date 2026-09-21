@@ -97,6 +97,9 @@ IF (BUILD_TESTING)
       list(APPEND ORO_EXTRA_TESTS "list-test")
     endif()
 
+    ADD_UNIT_TEST(cyclic_ports_test ORO_EXTRA_TESTS "${TEST_LIBRARIES}")
+    ADD_UNIT_TEST(cyclic_dataflow_test ORO_EXTRA_TESTS "${TEST_LIBRARIES}")
+
     # repeat for each test
     ADD_EXECUTABLE( core-test test-runner.cpp logger_test.cpp time_test.cpp ptr_test.cpp )
     TARGET_LINK_LIBRARIES( core-test orocos-rtt-${OROCOS_TARGET}_dynamic ${TEST_LIBRARIES})
@@ -260,6 +263,7 @@ IF (BUILD_TESTING)
     endif()
     ADD_UNIT_TEST(slave_test ORO_EXTRA_TESTS "${TEST_LIBRARIES}" )
     if(PLUGINS_ENABLE_SCRIPTING)
+        ADD_UNIT_TEST(port_endpoint_test ORO_EXTRA_TESTS "${TEST_LIBRARIES};${SCRIPTING_LIBRARIES}")
         ADD_UNIT_TEST(scripting_test ORO_EXTRA_TESTS "${TEST_LIBRARIES};${SCRIPTING_LIBRARIES}" )
         FILE(GLOB SCRIPTING_FUZZ_SEEDS
           "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/*")
